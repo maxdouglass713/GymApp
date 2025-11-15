@@ -1,0 +1,1641 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  FlatList,
+  Pressable,
+} from 'react-native';
+import { BrandColors, ComponentStyles } from '@/constants/theme';
+import { useWorkoutStore } from '@/stores/workoutStore';
+import { usePointsStore } from '@/stores/pointsStore';
+import { useVideoStore } from '@/stores/videoStore';
+
+// Mock exercise database
+const EXERCISE_DATABASE = [
+  'Squat', 'Bench Press', 'Deadlift', 'Lat Pulldown', 'Shoulder Press',
+  'Romanian Deadlift', 'Barbell Row', 'Bicep Curl', 'Triceps Pushdown',
+  'Leg Press', 'Leg Curl', 'Calf Raise', 'Overhead Press', 'Incline Press',
+  'Pull-ups', 'Dips', 'Lunges', 'Bulgarian Split Squats', 'Face Pulls',
+  'Hammer Curls', 'Skull Crushers', 'Lateral Raises', 'Rear Delt Flyes',
+  'Chest Flyes', 'Leg Extensions', 'Hip Thrusts', 'Planks', 'Russian Twists'
+];
+
+// Cardio activities database
+const CARDIO_DATABASE = [
+  'Running', 'Walking', 'Cycling', 'Swimming', 'Rowing', 'Elliptical',
+  'Stair Climbing', 'Jump Rope', 'HIIT', 'Dancing', 'Hiking', 'Treadmill',
+  'Stationary Bike', 'Cross Trainer', 'Boxing', 'Yoga', 'Pilates', 'Zumba'
+];
+
+const STYLE_OPTIONS = [
+  { key: 'slow', label: 'Slow & Controlled' },
+  { key: 'normal', label: 'Normal' },
+  { key: 'fast', label: 'Fast but Steady' },
+];
+
+export default function WorkoutScreen() {
+  
+  const {
+    currentWorkout,
+    selectedDate,
+    setSelectedDate,
+    setWorkoutTitle,
+    addExercise,
+    removeExercise,
+    addSet,
+    removeSet,
+    updateSet,
+    updateExerciseNotes,
+    finishWorkout,
+    clearCurrentWorkout,
+  } = useWorkoutStore();
+  
+  const { totalPoints, addPoints, isFeatureUnlocked, spendPoints, unlockFeature } = usePointsStore();
+  const { 
+    getVideoAttachment, 
+    getAnalysisForSet, 
+    addVideoAttachment, 
+    addFormAnalysis, 
+    generateMockAnalysis,
+    deleteVideoKeepAnalysis 
+  } = useVideoStore();
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Record<string, boolean>>({});
+  const [showVideoModal, setShowVideoModal] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
+  const [selectedSet, setSelectedSet] = useState<{workoutId: string, exerciseId: string, setId: string} | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [workoutType, setWorkoutType] = useState<'strength' | 'cardio'>('strength');
+  const [showCardioModal, setShowCardioModal] = useState(false);
+  const [selectedCardioActivity, setSelectedCardioActivity] = useState('');
+  const [cardioDuration, setCardioDuration] = useState('');
+  const [cardioSpeed, setCardioSpeed] = useState('');
+  const [cardioDistance, setCardioDistance] = useState('');
+  const [cardioIntensity, setCardioIntensity] = useState('moderate');
+
+  // Initialize workout title when component mounts
+  useEffect(() => {
+    if (!currentWorkout.title) {
+      const formattedDate = selectedDate.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+      setWorkoutTitle(`Workout – ${formattedDate}`);
+    }
+  }, [selectedDate, currentWorkout.title, setWorkoutTitle]);
+
+  const filteredExercises = EXERCISE_DATABASE.filter(exercise =>
+    exercise.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredCardio = CARDIO_DATABASE.filter(activity =>
+    activity.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const getWeekDays = () => {
+    const today = new Date();
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay()); // Start from Sunday
+    
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(startOfWeek);
+      date.setDate(startOfWeek.getDate() + i);
+      return date;
+    });
+  };
+
+  const formatDateShort = (date: Date) => {
+    return date.toLocaleDateString('en-US', { weekday: 'short' });
+  };
+
+  const formatDateNumber = (date: Date) => {
+    return date.getDate().toString();
+  };
+
+  const isToday = (date: Date) => {
+    const today = new Date();
+    return date.toDateString() === today.toDateString();
+  };
+
+  const isSelected = (date: Date) => {
+    return date.toDateString() === selectedDate.toDateString();
+  };
+
+  const handleAddCardio = () => {
+    if (!selectedCardioActivity || !cardioDuration) {
+      Alert.alert('Incomplete Cardio', 'Please select an activity and enter duration.');
+      return;
+    }
+
+    // Create cardio exercise with duration, speed, distance, intensity
+    const cardioExercise = {
+      name: selectedCardioActivity,
+      duration: parseInt(cardioDuration),
+      speed: cardioSpeed ? parseFloat(cardioSpeed) : null,
+      distance: cardioDistance ? parseFloat(cardioDistance) : null,
+      intensity: cardioIntensity,
+      type: 'cardio'
+    };
+
+    addExercise(cardioExercise);
+    
+    // Reset form
+    setSelectedCardioActivity('');
+    setCardioDuration('');
+    setCardioSpeed('');
+    setCardioDistance('');
+    setCardioIntensity('moderate');
+    setShowCardioModal(false);
+  };
+
+  const handleFinishWorkout = () => {
+    setValidationErrors({});
+    
+    // Validate workout
+    if (!currentWorkout.exercises || currentWorkout.exercises.length === 0) {
+      Alert.alert('Incomplete Workout', 'Please add at least one exercise.');
+      return;
+    }
+
+    // Check for incomplete sets (only for strength exercises)
+    const errors: Record<string, boolean> = {};
+    currentWorkout.exercises.forEach(exercise => {
+      if (exercise.type === 'cardio') {
+        // Cardio exercises don't need sets validation
+        return;
+      }
+      
+      exercise.sets.forEach(set => {
+        if (set.reps === null || set.weight === null) {
+          errors[`${exercise.id}-${set.id}`] = true;
+        }
+      });
+    });
+
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+      Alert.alert('Incomplete Sets', 'Please complete all set fields.');
+      return;
+    }
+
+    const completedWorkout = finishWorkout();
+    if (completedWorkout) {
+      // Award points based on workout type
+      const pointType = workoutType === 'cardio' ? 'cardio' : 'workout';
+      const pointAmount = workoutType === 'cardio' ? 50 : 100;
+      
+      addPoints({
+        type: pointType,
+        amount: pointAmount,
+        description: `Completed ${workoutType} workout`,
+      });
+      
+      Alert.alert('Workout Complete!', `${workoutType === 'cardio' ? 'Cardio' : 'Workout'} logged. +${pointAmount} GP.`, [
+        { text: 'OK', onPress: () => clearCurrentWorkout() }
+      ]);
+    }
+  };
+
+  const handleShareWithCommunity = () => {
+    if (!isFeatureUnlocked('community_challenges')) {
+      setShowUnlockModal(true);
+    } else {
+      // Simulate sharing
+      Alert.alert('Shared!', 'Shared with Community.');
+    }
+  };
+
+  const handleUnlockFeature = () => {
+    const cost = 3000;
+    if (totalPoints >= cost) {
+      if (spendPoints(cost, 'Unlock Community Challenges')) {
+        unlockFeature('community_challenges', 'gp');
+        setShowUnlockModal(false);
+        Alert.alert('Unlocked!', 'Community Challenges feature unlocked!');
+      }
+    } else {
+      Alert.alert('Insufficient Points', 'You need more GP to unlock this feature.');
+    }
+  };
+
+  const handleUploadSet = (exerciseId: string, setId: string) => {
+    if (!isFeatureUnlocked('form_feedback')) {
+      setShowUnlockModal(true);
+      return;
+    }
+    
+    setSelectedSet({ workoutId: currentWorkout.id || '', exerciseId, setId });
+    setShowVideoModal(true);
+  };
+
+  const handleVideoSelection = (source: 'camera' | 'library') => {
+    setShowVideoModal(false);
+    setShowReviewModal(true);
+    
+    // Mock video selection - in real implementation, this would open camera/library
+    setTimeout(() => {
+      // Simulate video processing
+      Alert.alert('Video Selected', `Video selected from ${source}. Ready to analyze!`);
+    }, 500);
+  };
+
+  const handleAnalyzeVideo = () => {
+    if (!selectedSet) return;
+    
+    setIsAnalyzing(true);
+    setShowReviewModal(false);
+    
+    // Mock video attachment
+    const attachmentId = addVideoAttachment({
+      workoutId: selectedSet.workoutId,
+      exerciseId: selectedSet.exerciseId,
+      setId: selectedSet.setId,
+      uri: 'mock://video/uri',
+      duration: 25, // 25 seconds
+    });
+    
+    // Mock analysis generation
+    setTimeout(() => {
+      const exercise = currentWorkout.exercises?.find(ex => ex.id === selectedSet.exerciseId);
+      const set = exercise?.sets.find(s => s.id === selectedSet.setId);
+      
+      if (exercise && set && set.reps && set.weight) {
+        const mockAnalysis = generateMockAnalysis(exercise.name, set.reps, set.weight);
+        const analysisId = addFormAnalysis({
+          ...mockAnalysis,
+          videoAttachmentId: attachmentId,
+        });
+        
+        // Update the set with video and analysis IDs
+        updateSet(selectedSet.exerciseId, selectedSet.setId, {
+          videoAttachmentId: attachmentId,
+          formAnalysisId: analysisId,
+        });
+        
+        setIsAnalyzing(false);
+        setShowAnalysisModal(true);
+        
+        Alert.alert('Analysis Complete!', 'Form analysis completed successfully.');
+      }
+    }, 3000); // Simulate 3-second analysis
+  };
+
+  const handleViewAnalysis = (exerciseId: string, setId: string) => {
+    setSelectedSet({ workoutId: currentWorkout.id || '', exerciseId, setId });
+    setShowAnalysisModal(true);
+  };
+
+  const handleDeleteVideo = (exerciseId: string, setId: string) => {
+    Alert.alert(
+      'Delete Video',
+      'Are you sure you want to delete this video? Analysis will be kept.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: () => {
+            const attachment = getVideoAttachment(currentWorkout.id || '', exerciseId, setId);
+            if (attachment) {
+              deleteVideoKeepAnalysis(attachment.id);
+              updateSet(exerciseId, setId, { videoAttachmentId: undefined });
+              Alert.alert('Video Deleted', 'Video removed but analysis preserved.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const renderWeekPicker = () => (
+    <View style={styles.weekPicker}>
+      {getWeekDays().map((date, index) => (
+        <TouchableOpacity
+          key={index}
+          style={[
+            styles.dayButton,
+            isSelected(date) && { backgroundColor: BrandColors.accent },
+            isToday(date) && !isSelected(date) && { borderColor: BrandColors.accent, borderWidth: 1 }
+          ]}
+          onPress={() => setSelectedDate(date)}
+        >
+          <Text style={[
+            styles.dayLabel,
+            { color: isSelected(date) ? '#000' : BrandColors.text }
+          ]}>
+            {formatDateShort(date)}
+          </Text>
+          <Text style={[
+            styles.dayNumber,
+            { color: isSelected(date) ? '#000' : BrandColors.text }
+          ]}>
+            {formatDateNumber(date)}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  const renderWorkoutTypeToggle = () => (
+    <View style={styles.workoutTypeToggle}>
+      <TouchableOpacity
+        style={[
+          styles.toggleButton,
+          workoutType === 'strength' && { backgroundColor: BrandColors.accent }
+        ]}
+        onPress={() => setWorkoutType('strength')}
+      >
+        <Text style={[
+          styles.toggleButtonText,
+          { color: workoutType === 'strength' ? '#000' : BrandColors.text }
+        ]}>
+          Strength
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.toggleButton,
+          workoutType === 'cardio' && { backgroundColor: BrandColors.accent }
+        ]}
+        onPress={() => setWorkoutType('cardio')}
+      >
+        <Text style={[
+          styles.toggleButtonText,
+          { color: workoutType === 'cardio' ? '#000' : BrandColors.text }
+        ]}>
+          Cardio
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderWorkoutMetadata = () => (
+    <View style={styles.metadataSection}>
+      <TextInput
+        style={[styles.titleInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
+        value={currentWorkout.title || ''}
+        onChangeText={setWorkoutTitle}
+        placeholder="Workout title..."
+        placeholderTextColor={BrandColors.textSecondary}
+      />
+      <Text style={[styles.dateLabel, { color: BrandColors.textSecondary }]}>
+        {selectedDate.toLocaleDateString('en-US', { 
+          weekday: 'long', 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        })}
+      </Text>
+    </View>
+  );
+
+  const renderExerciseSearch = () => (
+    <View style={styles.searchSection}>
+      {workoutType === 'strength' ? (
+        <>
+          <TextInput
+            style={[styles.searchInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search exercises..."
+            placeholderTextColor={BrandColors.textSecondary}
+          />
+          
+          {searchQuery.length > 0 && (
+            <View style={[styles.searchResults, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
+              {filteredExercises.slice(0, 5).map((exercise, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.searchResultItem}
+                  onPress={() => {
+                    addExercise(exercise);
+                    setSearchQuery('');
+                  }}
+                >
+                  <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
+                    {exercise}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </>
+      ) : (
+        <TouchableOpacity
+          style={[styles.addCardioButton, { backgroundColor: BrandColors.accent }]}
+          onPress={() => setShowCardioModal(true)}
+        >
+          <Text style={[styles.addCardioButtonText, { color: '#000' }]}>
+            + Add Cardio Activity
+          </Text>
+        </TouchableOpacity>
+      )}
+      
+      {(!currentWorkout.exercises || currentWorkout.exercises.length === 0) && (
+        <Text style={[styles.helperText, { color: BrandColors.textSecondary }]}>
+          Add {workoutType === 'cardio' ? 'cardio activities' : 'exercises'} to start logging.
+        </Text>
+      )}
+    </View>
+  );
+
+  const renderCardioCard = (exercise: any) => (
+    <View key={exercise.id} style={[styles.exerciseCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
+      <View style={styles.exerciseHeader}>
+        <Text style={[styles.exerciseName, { color: BrandColors.text }]}>{exercise.name}</Text>
+        <TouchableOpacity
+          style={styles.removeButton}
+          onPress={() => removeExercise(exercise.id)}
+        >
+          <Text style={[styles.removeButtonText, { color: BrandColors.accent }]}>×</Text>
+        </TouchableOpacity>
+      </View>
+      
+      <View style={styles.cardioDetails}>
+        <View style={styles.cardioRow}>
+          <Text style={[styles.cardioLabel, { color: BrandColors.textSecondary }]}>Duration:</Text>
+          <Text style={[styles.cardioValue, { color: BrandColors.text }]}>{exercise.duration} minutes</Text>
+        </View>
+        
+        {exercise.speed && (
+          <View style={styles.cardioRow}>
+            <Text style={[styles.cardioLabel, { color: BrandColors.textSecondary }]}>Speed:</Text>
+            <Text style={[styles.cardioValue, { color: BrandColors.text }]}>{exercise.speed} {exercise.name === 'Running' || exercise.name === 'Walking' ? 'mph' : 'rpm'}</Text>
+          </View>
+        )}
+        
+        {exercise.distance && (
+          <View style={styles.cardioRow}>
+            <Text style={[styles.cardioLabel, { color: BrandColors.textSecondary }]}>Distance:</Text>
+            <Text style={[styles.cardioValue, { color: BrandColors.text }]}>{exercise.distance} {exercise.name === 'Running' || exercise.name === 'Walking' ? 'miles' : 'km'}</Text>
+          </View>
+        )}
+        
+        <View style={styles.cardioRow}>
+          <Text style={[styles.cardioLabel, { color: BrandColors.textSecondary }]}>Intensity:</Text>
+          <Text style={[styles.cardioValue, { color: BrandColors.text }]}>{exercise.intensity}</Text>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderExerciseCard = (exercise: any) => {
+    // Render cardio exercises differently
+    if (exercise.type === 'cardio') {
+      return renderCardioCard(exercise);
+    }
+
+    return (
+      <View key={exercise.id} style={[styles.exerciseCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
+        <View style={styles.exerciseHeader}>
+          <Text style={[styles.exerciseName, { color: BrandColors.text }]}>{exercise.name}</Text>
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => removeExercise(exercise.id)}
+          >
+            <Text style={[styles.removeButtonText, { color: BrandColors.accent }]}>×</Text>
+          </TouchableOpacity>
+        </View>
+      
+      <View style={styles.setsTable}>
+        <View style={styles.tableHeader}>
+          <Text style={[styles.tableHeaderText, { color: BrandColors.textSecondary }]}>Set</Text>
+          <Text style={[styles.tableHeaderText, { color: BrandColors.textSecondary }]}>Reps</Text>
+          <Text style={[styles.tableHeaderText, { color: BrandColors.textSecondary }]}>Weight (lb)</Text>
+          <Text style={[styles.tableHeaderText, { color: BrandColors.textSecondary }]}>Style</Text>
+          <Text style={[styles.tableHeaderText, { color: BrandColors.textSecondary }]}>Video</Text>
+        </View>
+        
+        {exercise.sets.map((set: any, setIndex: number) => {
+          const hasVideo = set.videoAttachmentId;
+          const analysis = hasVideo ? getAnalysisForSet(currentWorkout.id || '', exercise.id, set.id) : null;
+          
+          return (
+            <View key={set.id}>
+              <View style={[
+                styles.setRow,
+                validationErrors[`${exercise.id}-${set.id}`] && { backgroundColor: '#e11d4820' }
+              ]}>
+                <Text style={[styles.setNumber, { color: BrandColors.text }]}>{setIndex + 1}</Text>
+                
+                <TextInput
+                  style={[
+                    styles.setInput,
+                    { color: BrandColors.text, borderColor: BrandColors.textSecondary },
+                    validationErrors[`${exercise.id}-${set.id}`] && set.reps === null && { borderColor: BrandColors.accent }
+                  ]}
+                  value={set.reps?.toString() || ''}
+                  onChangeText={(text) => updateSet(exercise.id, set.id, { reps: text ? parseInt(text) : null })}
+                  placeholder="0"
+                  placeholderTextColor={BrandColors.textSecondary}
+                  keyboardType="numeric"
+                />
+                
+                <TextInput
+                  style={[
+                    styles.setInput,
+                    { color: BrandColors.text, borderColor: BrandColors.textSecondary },
+                    validationErrors[`${exercise.id}-${set.id}`] && set.weight === null && { borderColor: BrandColors.accent }
+                  ]}
+                  value={set.weight?.toString() || ''}
+                  onChangeText={(text) => updateSet(exercise.id, set.id, { weight: text ? parseFloat(text) : null })}
+                  placeholder="0"
+                  placeholderTextColor={BrandColors.textSecondary}
+                  keyboardType="numeric"
+                />
+                
+                <View style={styles.styleDropdown}>
+                  <Text style={[styles.styleText, { color: BrandColors.text }]}>
+                    {STYLE_OPTIONS.find(opt => opt.key === set.style)?.label}
+                  </Text>
+                </View>
+                
+                <View style={styles.setActions}>
+                  {hasVideo ? (
+                    <TouchableOpacity
+                      style={[styles.videoButton, { backgroundColor: BrandColors.accent }]}
+                      onPress={() => handleViewAnalysis(exercise.id, set.id)}
+                    >
+                      <Text style={[styles.videoButtonText, { color: '#000' }]}>📹 View</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.uploadButton, { backgroundColor: BrandColors.accent }]}
+                      onPress={() => handleUploadSet(exercise.id, set.id)}
+                    >
+                      <Text style={[styles.uploadButtonText, { color: '#000' }]}>📤 Upload</Text>
+                    </TouchableOpacity>
+                  )}
+                  
+                  <TouchableOpacity
+                    style={styles.removeSetButton}
+                    onPress={() => removeSet(exercise.id, set.id)}
+                  >
+                    <Text style={[styles.removeSetText, { color: BrandColors.accent }]}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              {/* Analysis Card */}
+              {analysis && (
+                <View style={[styles.analysisCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
+                  <View style={styles.analysisHeader}>
+                    <Text style={[styles.analysisTitle, { color: BrandColors.text }]}>Form Analysis</Text>
+                    <TouchableOpacity onPress={() => handleDeleteVideo(exercise.id, set.id)}>
+                      <Text style={[styles.deleteVideoText, { color: BrandColors.accent }]}>Delete Video</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  <View style={styles.analysisStats}>
+                    <View style={styles.analysisStat}>
+                      <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.repCount}</Text>
+                      <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>Reps</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.avgTempo.toFixed(1)}s</Text>
+                      <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>Tempo</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.romPercentage.toFixed(0)}%</Text>
+                      <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>ROM</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.estimatedRPE.toFixed(1)}</Text>
+                      <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>RPE</Text>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.formCues}>
+                    {analysis.cues.slice(0, 2).map((cue, index) => (
+                      <View key={index} style={styles.formCue}>
+                        <View style={[
+                          styles.cueIndicator,
+                          { backgroundColor: cue.status === 'good' ? '#10b981' : cue.status === 'warning' ? '#f59e0b' : '#ef4444' }
+                        ]} />
+                        <Text style={[styles.cueText, { color: BrandColors.text }]}>{cue.message}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  
+                  <View style={styles.progressionSuggestion}>
+                    <Text style={[styles.suggestionLabel, { color: BrandColors.textSecondary }]}>Next session:</Text>
+                    <Text style={[styles.suggestionText, { color: BrandColors.text }]}>{analysis.progressionSuggestion}</Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          );
+        })}
+        
+        <TouchableOpacity
+          style={styles.addSetButton}
+          onPress={() => addSet(exercise.id)}
+        >
+          <Text style={[styles.addSetText, { color: BrandColors.accent }]}>+ Add Set</Text>
+        </TouchableOpacity>
+      </View>
+      
+      <TextInput
+        style={[styles.exerciseNotes, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
+        value={exercise.notes || ''}
+        onChangeText={(text) => updateExerciseNotes(exercise.id, text)}
+        placeholder="Exercise notes (optional)..."
+        placeholderTextColor={BrandColors.textSecondary}
+        multiline
+      />
+    </View>
+  );
+
+  const renderUnlockModal = () => (
+    <Modal visible={showUnlockModal} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, { backgroundColor: BrandColors.background }]}>
+          <Text style={[styles.modalTitle, { color: BrandColors.text }]}>
+            Form Feedback Mode is locked
+          </Text>
+          <Text style={[styles.modalText, { color: BrandColors.textSecondary }]}>
+            Upload a set to get analysis, RPE, and progression tips.{'\n'}Cost: 6,000 GP{'\n'}You have: {totalPoints.toLocaleString()} GP
+          </Text>
+          
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton, { borderColor: BrandColors.textSecondary }]}
+              onPress={() => setShowUnlockModal(false)}
+            >
+              <Text style={[styles.modalButtonText, { color: BrandColors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.modalButton,
+                styles.unlockButton,
+                { backgroundColor: totalPoints >= 6000 ? BrandColors.accent : BrandColors.textSecondary }
+              ]}
+              onPress={() => {
+                const cost = 6000;
+                if (totalPoints >= cost) {
+                  if (spendPoints(cost, 'Unlock Form Feedback Mode')) {
+                    unlockFeature('form_feedback', 'gp');
+                    setShowUnlockModal(false);
+                    Alert.alert('Unlocked!', 'Form Feedback Mode unlocked!');
+                  }
+                } else {
+                  Alert.alert('Insufficient Points', 'You need more GP to unlock this feature.');
+                }
+              }}
+              disabled={totalPoints < 6000}
+            >
+              <Text style={[styles.modalButtonText, { color: totalPoints >= 6000 ? '#000' : BrandColors.text }]}>
+                Unlock with Points
+              </Text>
+            </TouchableOpacity>
+          </View>
+          
+          <TouchableOpacity
+            style={styles.buyPointsButton}
+            onPress={() => {
+              setShowUnlockModal(false);
+              Alert.alert('Coming Soon', 'GP purchase feature coming soon!');
+            }}
+          >
+            <Text style={[styles.buyPointsText, { color: BrandColors.accent }]}>Buy GP (Coming Soon)</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderVideoModal = () => (
+    <Modal visible={showVideoModal} transparent animationType="slide">
+      <View style={styles.modalOverlay}>
+        <View style={[styles.bottomSheet, { backgroundColor: BrandColors.background }]}>
+          <View style={styles.bottomSheetHandle} />
+          <Text style={[styles.bottomSheetTitle, { color: BrandColors.text }]}>Upload Set Video</Text>
+          
+          <TouchableOpacity
+            style={[styles.videoOption, { backgroundColor: BrandColors.accent }]}
+            onPress={() => handleVideoSelection('camera')}
+          >
+            <Text style={[styles.videoOptionText, { color: '#000' }]}>📹 Record Video</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.videoOption, { backgroundColor: BrandColors.accent }]}
+            onPress={() => handleVideoSelection('library')}
+          >
+            <Text style={[styles.videoOptionText, { color: '#000' }]}>📁 Choose from Library</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.cancelOption, { borderColor: BrandColors.textSecondary }]}
+            onPress={() => setShowVideoModal(false)}
+          >
+            <Text style={[styles.cancelOptionText, { color: BrandColors.text }]}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderReviewModal = () => (
+    <Modal visible={showReviewModal} transparent animationType="slide">
+      <View style={styles.modalOverlay}>
+        <View style={[styles.bottomSheet, { backgroundColor: BrandColors.background }]}>
+          <View style={styles.bottomSheetHandle} />
+          <Text style={[styles.bottomSheetTitle, { color: BrandColors.text }]}>Review Video</Text>
+          
+          <View style={[styles.videoPreview, { backgroundColor: BrandColors.gray800 }]}>
+            <Text style={[styles.videoPreviewText, { color: BrandColors.textSecondary }]}>
+              📹 Video Preview (25s)
+            </Text>
+            <Text style={[styles.videoPreviewSubtext, { color: BrandColors.textSecondary }]}>
+              Tap to play • Trim up to 30s
+            </Text>
+          </View>
+          
+          <TouchableOpacity
+            style={[styles.analyzeButton, { backgroundColor: BrandColors.accent }]}
+            onPress={handleAnalyzeVideo}
+          >
+            <Text style={[styles.analyzeButtonText, { color: '#000' }]}>Analyze</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.discardButton, { borderColor: BrandColors.textSecondary }]}
+            onPress={() => setShowReviewModal(false)}
+          >
+            <Text style={[styles.discardButtonText, { color: BrandColors.text }]}>Discard</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderAnalysisModal = () => {
+    if (!selectedSet) return null;
+    
+    const analysis = getAnalysisForSet(selectedSet.workoutId, selectedSet.exerciseId, selectedSet.setId);
+    if (!analysis) return null;
+    
+    return (
+      <Modal visible={showAnalysisModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.analysisModal, { backgroundColor: BrandColors.background }]}>
+            <View style={styles.bottomSheetHandle} />
+            <Text style={[styles.bottomSheetTitle, { color: BrandColors.text }]}>Form Analysis</Text>
+            
+            <ScrollView style={styles.analysisScrollView} showsVerticalScrollIndicator={false}>
+              <View style={styles.analysisStats}>
+                <View style={styles.analysisStat}>
+                  <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.repCount}</Text>
+                  <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>Reps</Text>
+                </View>
+                <View style={styles.analysisStat}>
+                  <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.avgTempo.toFixed(1)}s</Text>
+                  <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>Avg Tempo</Text>
+                </View>
+                <View style={styles.analysisStat}>
+                  <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.romPercentage.toFixed(0)}%</Text>
+                  <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>ROM</Text>
+                </View>
+                <View style={styles.analysisStat}>
+                  <Text style={[styles.analysisStatValue, { color: BrandColors.accent }]}>{analysis.estimatedRPE.toFixed(1)}</Text>
+                  <Text style={[styles.analysisStatLabel, { color: BrandColors.textSecondary }]}>RPE</Text>
+                </View>
+              </View>
+              
+              <View style={styles.formCuesSection}>
+                <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Form Checklist</Text>
+                {analysis.cues.map((cue, index) => (
+                  <View key={index} style={styles.formCue}>
+                    <View style={[
+                      styles.cueIndicator,
+                      { backgroundColor: cue.status === 'good' ? '#10b981' : cue.status === 'warning' ? '#f59e0b' : '#ef4444' }
+                    ]} />
+                    <View style={styles.cueContent}>
+                      <Text style={[styles.cueCategory, { color: BrandColors.text }]}>{cue.category}</Text>
+                      <Text style={[styles.cueText, { color: BrandColors.textSecondary }]}>{cue.message}</Text>
+                    </View>
+                    <Text style={[styles.cueScore, { color: BrandColors.accent }]}>{cue.score}/100</Text>
+                  </View>
+                ))}
+              </View>
+              
+              <View style={styles.progressionSection}>
+                <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Progression Suggestion</Text>
+                <View style={[styles.progressionCard, { backgroundColor: BrandColors.gray800 }]}>
+                  <Text style={[styles.progressionText, { color: BrandColors.text }]}>{analysis.progressionSuggestion}</Text>
+                </View>
+                <Text style={[styles.progressionNote, { color: BrandColors.textSecondary }]}>
+                  These are guidelines—listen to your body.
+                </Text>
+              </View>
+            </ScrollView>
+            
+            <TouchableOpacity
+              style={[styles.closeAnalysisButton, { backgroundColor: BrandColors.accent }]}
+              onPress={() => setShowAnalysisModal(false)}
+            >
+              <Text style={[styles.closeAnalysisButtonText, { color: '#000' }]}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderCardioModal = () => (
+    <Modal visible={showCardioModal} animationType="slide">
+      <View style={[styles.modalContainer, { backgroundColor: BrandColors.background }]}>
+        <View style={styles.modalHeader}>
+          <Text style={[styles.modalTitle, { color: BrandColors.text }]}>Add Cardio Activity</Text>
+          <TouchableOpacity onPress={() => setShowCardioModal(false)}>
+            <Text style={[styles.closeButton, { color: BrandColors.accent }]}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <ScrollView style={styles.modalContent}>
+          {/* Activity Selection */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Activity</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.activityScroll}>
+              {CARDIO_DATABASE.map((activity, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    styles.activityChip,
+                    { backgroundColor: selectedCardioActivity === activity ? BrandColors.accent : BrandColors.gray800 },
+                    { borderColor: BrandColors.textSecondary }
+                  ]}
+                  onPress={() => setSelectedCardioActivity(activity)}
+                >
+                  <Text style={[
+                    styles.activityChipText,
+                    { color: selectedCardioActivity === activity ? '#000' : BrandColors.text }
+                  ]}>
+                    {activity}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Duration */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Duration (minutes) *</Text>
+            <TextInput
+              style={[styles.modalInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
+              value={cardioDuration}
+              onChangeText={setCardioDuration}
+              placeholder="30"
+              placeholderTextColor={BrandColors.textSecondary}
+              keyboardType="numeric"
+            />
+          </View>
+
+          {/* Speed */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Speed (optional)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
+              value={cardioSpeed}
+              onChangeText={setCardioSpeed}
+              placeholder="6.5"
+              placeholderTextColor={BrandColors.textSecondary}
+              keyboardType="numeric"
+            />
+          </View>
+
+          {/* Distance */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Distance (optional)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
+              value={cardioDistance}
+              onChangeText={setCardioDistance}
+              placeholder="3.2"
+              placeholderTextColor={BrandColors.textSecondary}
+              keyboardType="numeric"
+            />
+          </View>
+
+          {/* Intensity */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Intensity</Text>
+            <View style={styles.intensityButtons}>
+              {['low', 'moderate', 'high'].map((intensity) => (
+                <TouchableOpacity
+                  key={intensity}
+                  style={[
+                    styles.intensityButton,
+                    { backgroundColor: cardioIntensity === intensity ? BrandColors.accent : BrandColors.gray800 },
+                    { borderColor: BrandColors.textSecondary }
+                  ]}
+                  onPress={() => setCardioIntensity(intensity)}
+                >
+                  <Text style={[
+                    styles.intensityButtonText,
+                    { color: cardioIntensity === intensity ? '#000' : BrandColors.text }
+                  ]}>
+                    {intensity.charAt(0).toUpperCase() + intensity.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
+        
+        <View style={styles.modalActions}>
+          <TouchableOpacity
+            style={[styles.addButton, { backgroundColor: BrandColors.accent }]}
+            onPress={handleAddCardio}
+          >
+            <Text style={[styles.addButtonText, { color: '#000' }]}>Add Activity</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  return (
+    <View style={styles.container}>
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {renderWeekPicker()}
+        {renderWorkoutTypeToggle()}
+        {renderWorkoutMetadata()}
+        {renderExerciseSearch()}
+        
+        {currentWorkout.exercises?.map(renderExerciseCard)}
+      </ScrollView>
+      
+      <View style={[styles.actionBar, { backgroundColor: BrandColors.background + '95', borderTopColor: BrandColors.gray800 }]}>
+          <TouchableOpacity
+            style={[
+              styles.shareButton,
+              { 
+                backgroundColor: isFeatureUnlocked('community_challenges') ? BrandColors.accent : BrandColors.gray700,
+                opacity: isFeatureUnlocked('community_challenges') ? 1 : 0.6
+              }
+            ]}
+            onPress={handleShareWithCommunity}
+          >
+            <Text style={[
+              styles.shareButtonText,
+              { color: isFeatureUnlocked('community_challenges') ? BrandColors.text : BrandColors.textSecondary }
+            ]}>
+              Share with Community
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.finishButton, { backgroundColor: BrandColors.accent }]}
+            onPress={handleFinishWorkout}
+          >
+            <Text style={[styles.finishButtonText, { color: BrandColors.text }]}>
+              Finish Workout
+            </Text>
+          </TouchableOpacity>
+        </View>
+        
+      {renderUnlockModal()}
+      {renderVideoModal()}
+      {renderReviewModal()}
+      {renderAnalysisModal()}
+      {renderCardioModal()}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: BrandColors.background,
+  },
+  scrollView: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  weekPicker: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  dayButton: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    minWidth: 40,
+  },
+  dayLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  dayNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  metadataSection: {
+    marginBottom: 20,
+  },
+  titleInput: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    borderBottomWidth: 1,
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  dateLabel: {
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
+  searchSection: {
+    marginBottom: 20,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  searchResults: {
+    borderWidth: 1,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  searchResultItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  searchResultText: {
+    fontSize: 16,
+  },
+  helperText: {
+    fontSize: 14,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  exerciseCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  exerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  exerciseName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  removeButton: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeButtonText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  setsTable: {
+    marginBottom: 12,
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  tableHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+  },
+  setRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  setNumber: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+    textAlign: 'center',
+  },
+  setInput: {
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 14,
+    flex: 1,
+    marginHorizontal: 4,
+    textAlign: 'center',
+  },
+  styleDropdown: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  styleText: {
+    fontSize: 12,
+  },
+  setActions: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  uploadButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    alignItems: 'center',
+    minWidth: 60,
+  },
+  uploadButtonText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  videoButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    alignItems: 'center',
+    minWidth: 60,
+  },
+  videoButtonText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  removeSetButton: {
+    alignItems: 'center',
+  },
+  removeSetText: {
+    fontSize: 16,
+  },
+  analysisCard: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  analysisHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  analysisTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  deleteVideoText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  analysisStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 8,
+  },
+  analysisStat: {
+    alignItems: 'center',
+  },
+  analysisStatValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  analysisStatLabel: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  formCues: {
+    marginBottom: 8,
+  },
+  formCue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  cueIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  cueText: {
+    fontSize: 12,
+    flex: 1,
+  },
+  progressionSuggestion: {
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: BrandColors.gray800,
+  },
+  suggestionLabel: {
+    fontSize: 10,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  suggestionText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  addSetButton: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  addSetText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  exerciseNotes: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    minHeight: 60,
+    textAlignVertical: 'top',
+  },
+  actionBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    gap: 12,
+  },
+  shareButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  shareButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  finishButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  finishButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modalContent: {
+    borderRadius: 12,
+    padding: 20,
+    width: '100%',
+    maxWidth: 300,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  modalText: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    borderWidth: 1,
+  },
+  unlockButton: {
+    // backgroundColor set dynamically
+  },
+  modalButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  buyPointsButton: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  buyPointsText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  bottomSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  bottomSheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: BrandColors.gray700,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  bottomSheetTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  videoOption: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  videoOptionText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  cancelOption: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  cancelOptionText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  videoPreview: {
+    height: 200,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  videoPreviewText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  videoPreviewSubtext: {
+    fontSize: 14,
+  },
+  analyzeButton: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  analyzeButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  discardButton: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  discardButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  analysisModal: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '80%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+  },
+  analysisScrollView: {
+    flex: 1,
+    marginBottom: 20,
+  },
+  formCuesSection: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  cueContent: {
+    flex: 1,
+    marginRight: 8,
+  },
+  cueCategory: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  cueScore: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  progressionSection: {
+    marginBottom: 20,
+  },
+  progressionCard: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  progressionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  progressionNote: {
+    fontSize: 12,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  closeAnalysisButton: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  closeAnalysisButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  workoutTypeToggle: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    backgroundColor: BrandColors.gray800,
+    borderRadius: 8,
+    padding: 4,
+  },
+  toggleButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  toggleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  addCardioButton: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  addCardioButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  cardioDetails: {
+    marginTop: 12,
+  },
+  cardioRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  cardioLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  cardioValue: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalContainer: {
+    flex: 1,
+    paddingTop: 50,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  closeButton: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 20,
+  },
+  inputGroup: {
+    marginBottom: 24,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+  },
+  activityScroll: {
+    marginBottom: 8,
+  },
+  activityChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+  },
+  activityChipText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  intensityButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  intensityButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  intensityButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalActions: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  addButton: {
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  addButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+});
+}

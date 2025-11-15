@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Environment variables
+.env
+.env.local
+.env*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build outputs
+build/
+*.tsbuildinfo
+
+# Temporary files
+*.tmp
+*.temp
+metro_error.txt
+metro_output.txt
