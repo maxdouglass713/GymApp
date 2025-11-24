@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -18,23 +19,15 @@ import { usePointsStore } from '@/stores/pointsStore';
 import { useProgressStore } from '@/stores/progressStore';
 import { useVideoStore } from '@/stores/videoStore';
 import { useAuth } from '@/components/AuthProvider';
+import { useUserStore } from '@/stores/userStore';
+import { useWeightStore } from '@/stores/weightStore';
+import { eventBus } from '@/lib/eventBus';
 
 const TAB_OPTIONS = [
   { key: 'history', label: 'History' },
-  { key: 'prs', label: 'PRs' },
+  { key: 'weight', label: 'Weight' },
   { key: 'trends', label: 'Trends' },
   { key: 'insights', label: 'Insights' },
-];
-
-const PR_FILTERS = [
-  { key: 'All', label: 'All', muscleGroups: [] },
-  { key: 'Legs', label: 'Legs', muscleGroups: ['Quads', 'Hamstrings', 'Glutes', 'Calves'] },
-  { key: 'Chest', label: 'Chest', muscleGroups: ['Chest'] },
-  { key: 'Back', label: 'Back', muscleGroups: ['Back'] },
-  { key: 'Shoulders', label: 'Shoulders', muscleGroups: ['Shoulders'] },
-  { key: 'Biceps', label: 'Biceps', muscleGroups: ['Biceps'] },
-  { key: 'Triceps', label: 'Triceps', muscleGroups: ['Triceps'] },
-  { key: 'Core', label: 'Core', muscleGroups: ['Core'] },
 ];
 
 const TREND_PERIODS = [
@@ -43,7 +36,7 @@ const TREND_PERIODS = [
   { key: '52W', label: '52W' },
 ];
 
-const TAB_GUIDES: Record<'history' | 'prs' | 'trends' | 'insights', {
+const TAB_GUIDES: Record<'history' | 'weight' | 'trends' | 'insights', {
   title: string;
   summary: string;
   bullets: string[];
@@ -57,13 +50,13 @@ const TAB_GUIDES: Record<'history' | 'prs' | 'trends' | 'insights', {
       'Tap into a session to analyze individual sets and add notes for next time.'
     ],
   },
-  prs: {
-    title: 'Personal Records',
-    summary: 'Highlights your strongest sets per movement. Perfect for planning the next push.',
+  weight: {
+    title: 'Weight Tracking',
+    summary: 'Track your daily weight to monitor progress towards your fitness goals.',
     bullets: [
-      'Use PRs to set your warm-up and ramp weights for an upcoming session.',
-      'If a PR is old, schedule a dedicated top set to retest and refresh it.',
-      'Send a PR to a workout once that feature unlocks to pre-load a goal set.'
+      'Log your weight every morning for the most accurate tracking.',
+      'Monitor your progress towards your weight goal (lose fat or build muscle).',
+      'Consistent daily logging helps identify trends and adjust your plan accordingly.'
     ],
   },
   trends: {
@@ -88,19 +81,19 @@ const TAB_GUIDES: Record<'history' | 'prs' | 'trends' | 'insights', {
 
 export default function ProgressScreen() {
   const { user } = useAuth();
+  const { profile } = useUserStore();
   const { workoutHistory } = useWorkoutStore();
+  const { dailyWeights, loadWeightsFromFirebase } = useWeightStore();
+  const [weightRefreshKey, setWeightRefreshKey] = useState(0);
   const { totalPoints, isFeatureUnlocked, spendPoints, unlockFeature } = usePointsStore();
   const { addVideoAttachment, generateMockAnalysis } = useVideoStore();
   const {
     selectedTab,
     selectedMonth,
     selectedTrendPeriod,
-    selectedPRFilter,
     setSelectedTab,
     setSelectedMonth,
     setSelectedTrendPeriod,
-    setSelectedPRFilter,
-    calculatePersonalRecords,
     calculateTrendData,
     calculateInsightsData,
     getStreakData,
@@ -117,33 +110,87 @@ export default function ProgressScreen() {
   const [selectedSet, setSelectedSet] = useState<any>(null);
   const [editableWorkout, setEditableWorkout] = useState<any>(null);
   const [selectedExerciseTrend, setSelectedExerciseTrend] = useState<string | null>(null);
-  const [guideTab, setGuideTab] = useState<'history' | 'prs' | 'trends' | 'insights' | null>(null);
+  const [guideTab, setGuideTab] = useState<'history' | 'weight' | 'trends' | 'insights' | null>(null);
 
-  const personalRecords = calculatePersonalRecords(workoutHistory);
   const trendData = calculateTrendData(workoutHistory, selectedTrendPeriod);
   const insightsData = calculateInsightsData(workoutHistory);
   const streakData = getStreakData(workoutHistory);
 
-  // Filter PRs based on selected filter
-  const currentPRFilter = PR_FILTERS.find(filter => filter.key === selectedPRFilter);
+  const initials = useMemo(() => {
+    const name = profile?.firstName || user?.displayName || user?.email || 'You';
+    return name
+      .split(' ')
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }, [profile?.firstName, user?.displayName, user?.email]);
 
-  const filteredPRs = !currentPRFilter || currentPRFilter.key === 'All'
-    ? personalRecords
-    : personalRecords.filter((pr) => {
-        const exerciseMuscles = getMuscleGroups(pr.exercise);
-        return exerciseMuscles.some((muscle) => currentPRFilter.muscleGroups.includes(muscle));
+  const renderProfileSection = () => (
+    <View style={[styles.profileSection, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.gray700 }]}>
+      <View style={[styles.avatar, { backgroundColor: BrandColors.accent + '30' }]}>
+        <Text style={[styles.avatarText, { color: BrandColors.accent }]}>{initials}</Text>
+      </View>
+      <View style={styles.profileInfo}>
+        <Text style={[styles.profileName, { color: BrandColors.text }]}>
+          {profile?.firstName || user?.displayName || 'Athlete'}
+        </Text>
+        <View style={styles.profileStats}>
+          <View style={styles.profileStat}>
+            <Text style={[styles.profileStatValue, { color: BrandColors.accent }]}>{totalPoints}</Text>
+            <Text style={[styles.profileStatLabel, { color: BrandColors.textSecondary }]}>Points</Text>
+          </View>
+          <View style={styles.profileStat}>
+            <Text style={[styles.profileStatValue, { color: BrandColors.accent }]}>
+              {workoutHistory?.length || 0}
+            </Text>
+            <Text style={[styles.profileStatLabel, { color: BrandColors.textSecondary }]}>Workouts</Text>
+          </View>
+          <View style={styles.profileStat}>
+            <Text style={[styles.profileStatValue, { color: BrandColors.accent }]}>{streakData.current}</Text>
+            <Text style={[styles.profileStatLabel, { color: BrandColors.textSecondary }]}>Streak</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+
+  // Load weights on mount
+  useEffect(() => {
+    if (user?.uid) {
+      loadWeightsFromFirebase(user.uid).catch((error) => {
+        console.error('❌ Error loading weights:', error);
       });
+    }
+  }, [user?.uid, loadWeightsFromFirebase]);
 
-  const filteredWorkouts = !currentPRFilter || currentPRFilter.key === 'All'
-    ? workoutHistory
-    : workoutHistory.filter((workout) =>
-        workout.exercises?.some((exercise: any) => {
-          const exerciseMuscles = getMuscleGroups(exercise.name);
-          return exerciseMuscles.some((muscle) => currentPRFilter.muscleGroups.includes(muscle));
-        })
-      );
+  // Listen for weight logged event - force component to re-render
+  useEffect(() => {
+    const unsubscribe = eventBus.subscribe('weightLogged', () => {
+      console.log('📊 Progress - weightLogged event, forcing re-render...');
+      // Force a re-render by updating state
+      setWeightRefreshKey(prev => prev + 1);
+      // Also check store
+      const currentWeights = useWeightStore.getState().dailyWeights;
+      console.log('📊 Progress - Current weights in store:', currentWeights);
+      console.log('📊 Progress - Current weights length:', currentWeights?.length || 0);
+    });
+    return () => unsubscribe();
+  }, []);
 
-  const renderGuideLink = (tabKey: 'history' | 'prs' | 'trends' | 'insights') => (
+  // Refresh weights when progress tab comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user?.uid) {
+        loadWeightsFromFirebase(user.uid).catch((error) => {
+          console.error('❌ Error loading weights on focus:', error);
+        });
+      }
+    }, [user?.uid, loadWeightsFromFirebase])
+  );
+
+  const renderGuideLink = (tabKey: 'history' | 'weight' | 'trends' | 'insights') => (
     <TouchableOpacity
       style={[styles.guideLink, { borderColor: BrandColors.textSecondary }]}
       activeOpacity={0.8}
@@ -357,118 +404,215 @@ export default function ProgressScreen() {
     </ScrollView>
   );
 
-  const renderPRsTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      {renderGuideLink('prs')}
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Filter by Body Part</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
-          {PR_FILTERS.map((filter) => (
-            <TouchableOpacity
-              key={filter.key}
-              style={[
-                styles.filterPill,
-                { backgroundColor: selectedPRFilter === filter.key ? BrandColors.accent : BrandColors.background, borderColor: BrandColors.textSecondary }
-              ]}
-              onPress={() => setSelectedPRFilter(filter.key)}
-            >
-              <Text style={[
-                styles.filterText,
-                { color: selectedPRFilter === filter.key ? '#000' : BrandColors.text }
-              ]}>
-                {filter.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+  const renderWeightTab = () => {
+    // Debug: Log what we're getting from the store
+    console.log('📊 ===== RENDER WEIGHT TAB =====');
+    console.log('📊 dailyWeights from store:', dailyWeights);
+    console.log('📊 dailyWeights type:', typeof dailyWeights);
+    console.log('📊 dailyWeights is array?', Array.isArray(dailyWeights));
+    console.log('📊 dailyWeights length:', dailyWeights?.length || 0);
+    console.log('📊 weightRefreshKey:', weightRefreshKey);
+    
+    // Get user's weight goal based on primaryGoal
+    const primaryGoal = profile?.primaryGoal || 'improve_fitness';
+    const isLosingWeight = primaryGoal === 'lose_fat';
+    const isGainingWeight = primaryGoal === 'build_muscle';
+    
+    // Sort weights by date for calculations
+    const sortedWeightsForCalc = dailyWeights && Array.isArray(dailyWeights)
+      ? [...dailyWeights].sort((a, b) => 
+          new Date(a.date).getTime() - new Date(b.date).getTime()
+        )
+      : [];
+    
+    console.log('📊 sortedWeightsForCalc:', sortedWeightsForCalc);
+    
+    // Get starting weight from profile or oldest logged weight
+    const profileWeightValue = profile?.weight?.value;
+    let startingWeight: number | null = null;
+    
+    if (profileWeightValue !== undefined && profileWeightValue !== null && profileWeightValue !== '') {
+      const parsed = typeof profileWeightValue === 'number' 
+        ? profileWeightValue 
+        : parseFloat(String(profileWeightValue));
+      if (!isNaN(parsed) && parsed > 0) {
+        startingWeight = parsed;
+      }
+    }
+    
+    // If no profile weight, use oldest logged weight as starting weight
+    if (startingWeight === null && sortedWeightsForCalc.length > 0) {
+      startingWeight = sortedWeightsForCalc[0].weight;
+    }
+    
+    console.log('📊 startingWeight:', startingWeight);
+    
+    // Get current weight (most recent)
+    const currentWeight = sortedWeightsForCalc.length > 0 
+      ? sortedWeightsForCalc[sortedWeightsForCalc.length - 1].weight
+      : null;
+    
+    console.log('📊 currentWeight:', currentWeight);
+    
+    // Calculate weight change
+    const weightChange = startingWeight && currentWeight 
+      ? currentWeight - startingWeight 
+      : null;
+    
+    // Calculate progress percentage (assuming goal is 10% change for now)
+    const goalWeightChange = startingWeight ? startingWeight * 0.1 : 0;
+    const progressPercentage = weightChange && goalWeightChange > 0
+      ? Math.min(Math.max((Math.abs(weightChange) / goalWeightChange) * 100, 0), 100)
+      : 0;
+    
+    // Determine if on track
+    const isOnTrack = weightChange 
+      ? (isLosingWeight && weightChange < 0) || (isGainingWeight && weightChange > 0) || (!isLosingWeight && !isGainingWeight)
+      : null;
+    
+    // Sort weights by date (newest first) - use useMemo with weightRefreshKey
+    const sortedWeights = useMemo(() => {
+      if (!dailyWeights || !Array.isArray(dailyWeights)) {
+        return [];
+      }
+      return [...dailyWeights].sort((a, b) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+    }, [dailyWeights, weightRefreshKey]);
+    
+    console.log('📊 sortedWeights for display:', sortedWeights);
+    console.log('📊 sortedWeights length:', sortedWeights.length);
 
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Personal Records</Text>
-        {filteredPRs.length === 0 ? (
-          <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-            <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
-              No personal records yet. Complete some workouts to see your PRs!
-            </Text>
-          </View>
-        ) : (
-          filteredPRs.map((pr) => (
-            <View key={pr.id} style={[styles.prCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-              <View style={styles.prHeader}>
-                <Text style={[styles.prExercise, { color: BrandColors.text }]}>{pr.exercise}</Text>
-                <Text style={[styles.prDate, { color: BrandColors.textSecondary }]}>
-                  {new Date(pr.date).toLocaleDateString()}
-                </Text>
-              </View>
-              <View style={styles.prStats}>
-                <View style={styles.prStat}>
-                  <Text style={[styles.prStatValue, { color: BrandColors.accent }]}>
-                    {pr.weight}×{pr.reps}
+    return (
+      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+        {renderGuideLink('weight')}
+        
+        {/* Weight Progress Summary - Only show if we have weights */}
+        {dailyWeights.length > 0 && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Weight Progress</Text>
+            <View style={[styles.weightProgressCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
+              <View style={styles.weightProgressRow}>
+                <View style={styles.weightProgressColumn}>
+                  <Text style={[styles.weightProgressLabel, { color: BrandColors.textSecondary }]}>Starting Weight</Text>
+                  <Text style={[styles.weightProgressValue, { color: BrandColors.text }]}>
+                    {startingWeight !== null ? startingWeight.toFixed(1) : 'N/A'} lbs
                   </Text>
-                  <Text style={[styles.prStatLabel, { color: BrandColors.textSecondary }]}>Best Set</Text>
                 </View>
-                <View style={styles.prStat}>
-                  <Text style={[styles.prStatValue, { color: BrandColors.accent }]}>
-                    {pr.estimated1RM}
+                <View style={styles.weightProgressColumn}>
+                  <Text style={[styles.weightProgressLabel, { color: BrandColors.textSecondary }]}>Current Weight</Text>
+                  <Text style={[styles.weightProgressValue, { color: BrandColors.accent }]}>
+                    {currentWeight !== null ? currentWeight.toFixed(1) : 'N/A'} lbs
                   </Text>
-                  <Text style={[styles.prStatLabel, { color: BrandColors.textSecondary }]}>Est. 1RM</Text>
+                </View>
+                <View style={styles.weightProgressColumn}>
+                  <Text style={[styles.weightProgressLabel, { color: BrandColors.textSecondary }]}>Change</Text>
+                  <Text style={[
+                    styles.weightProgressValue,
+                    { 
+                      color: weightChange !== null && weightChange !== 0
+                        ? (isLosingWeight && weightChange < 0) || (isGainingWeight && weightChange > 0)
+                          ? BrandColors.accent
+                          : '#8B0000'
+                        : BrandColors.textSecondary
+                    }
+                  ]}>
+                    {weightChange !== null ? `${weightChange > 0 ? '+' : ''}${weightChange.toFixed(1)} lbs` : 'N/A'}
+                  </Text>
                 </View>
               </View>
-              <TouchableOpacity
-                style={[styles.sendToWorkoutButton, { backgroundColor: BrandColors.accent }]}
-                onPress={() => Alert.alert('Coming Soon', 'Send to Workout feature coming soon!')}
-              >
-                <Text style={[styles.sendToWorkoutText, { color: '#000' }]}>Send to Workout</Text>
-              </TouchableOpacity>
+              
+              {/* Progress Bar */}
+              {isLosingWeight || isGainingWeight ? (
+                <View style={styles.progressBarContainer}>
+                  <View style={[styles.progressBarBackground, { backgroundColor: BrandColors.gray800 }]}>
+                    <View 
+                      style={[
+                        styles.progressBarFill,
+                        { 
+                          width: `${progressPercentage}%`,
+                          backgroundColor: isOnTrack ? BrandColors.accent : '#8B0000'
+                        }
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.progressBarText, { color: BrandColors.textSecondary }]}>
+                    {isOnTrack ? '✅ On Track' : '⚠️ Off Track'} - {progressPercentage.toFixed(0)}% towards goal
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.progressBarContainer}>
+                  <Text style={[styles.progressBarText, { color: BrandColors.textSecondary }]}>
+                    Track your weight daily to monitor your fitness journey
+                  </Text>
+                </View>
+              )}
             </View>
-          ))
-        )}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Workouts</Text>
-        {filteredWorkouts.length === 0 ? (
-          <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-            <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>No workouts logged yet for this focus.</Text>
           </View>
-        ) : (
-          filteredWorkouts
-            .slice()
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-            .map((workout) => (
-              <View
-                key={workout.id}
-                style={[styles.sessionCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}
-              >
-                <View style={styles.sessionHeader}>
-                  <Text style={[styles.sessionTitle, { color: BrandColors.text }]}>{workout.title || 'Untitled Workout'}</Text>
-                  <Text style={[styles.sessionDate, { color: BrandColors.textSecondary }]}>
-                    {workout.date ? new Date(workout.date).toLocaleDateString() : 'Unknown Date'}
-                  </Text>
-                </View>
-                <Text style={[styles.sessionStat, { color: BrandColors.textSecondary }]}>Targeted Exercises:</Text>
-                <View style={styles.exerciseTagRow}>
-                  {workout.exercises
-                    ?.filter((exercise: any) => {
-                      if (!currentPRFilter || currentPRFilter.key === 'All') {
-                        return true;
-                      }
-                      const exerciseMuscles = getMuscleGroups(exercise.name);
-                      return exerciseMuscles.some((muscle) => currentPRFilter.muscleGroups.includes(muscle));
-                    })
-                    .slice(0, 4)
-                    .map((exercise: any, index: number) => (
-                      <View key={`${workout.id}-${exercise.id || index}`} style={[styles.exerciseTag, { borderColor: BrandColors.accent }]}>
-                        <Text style={[styles.exerciseTagText, { color: BrandColors.accent }]}>{exercise.name}</Text>
-                      </View>
-                    ))}
-                </View>
-              </View>
-            ))
         )}
-      </View>
-    </ScrollView>
-  );
+
+        {/* Daily Weight Entries - Always show this section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Daily Weight Log</Text>
+          {sortedWeights.length === 0 ? (
+            <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
+              <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
+                No weight entries yet. Log your weight daily to track your progress!
+              </Text>
+            </View>
+          ) : (
+            sortedWeights.map((weightEntry, index) => {
+              const previousWeight = index < sortedWeights.length - 1 ? sortedWeights[index + 1].weight : null;
+              const dayChange = previousWeight ? weightEntry.weight - previousWeight : null;
+              
+              return (
+                <View 
+                  key={`weight-${weightEntry.date}-${index}`} 
+                  style={[styles.weightEntryCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}
+                >
+                  <View style={styles.weightEntryHeader}>
+                    <View style={styles.weightEntryLeft}>
+                      <Text style={[styles.weightEntryDate, { color: BrandColors.text }]}>
+                        {new Date(weightEntry.date).toLocaleDateString('en-US', { 
+                          weekday: 'long',
+                          month: 'short', 
+                          day: 'numeric',
+                          year: 'numeric'
+                        })}
+                      </Text>
+                      <Text style={[styles.weightEntryTime, { color: BrandColors.textSecondary }]}>
+                        {new Date(weightEntry.loggedAt).toLocaleTimeString('en-US', { 
+                          hour: 'numeric', 
+                          minute: '2-digit' 
+                        })}
+                      </Text>
+                    </View>
+                    <View style={styles.weightEntryRight}>
+                      <Text style={[styles.weightEntryValue, { color: BrandColors.accent }]}>
+                        {weightEntry.weight.toFixed(1)} lbs
+                      </Text>
+                      {dayChange !== null && dayChange !== 0 && (
+                        <Text style={[
+                          styles.weightEntryChange,
+                          { 
+                            color: dayChange < 0 
+                              ? (isLosingWeight ? BrandColors.accent : '#8B0000')
+                              : (isGainingWeight ? BrandColors.accent : '#8B0000')
+                          }
+                        ]}>
+                          {dayChange > 0 ? '↑' : '↓'} {Math.abs(dayChange).toFixed(1)} lbs
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+      </ScrollView>
+    );
+  };
 
   const renderTrendsTab = () => {
     const formatDate = (date?: string) => {
@@ -1309,7 +1453,7 @@ export default function ProgressScreen() {
   const renderTabContent = () => {
     switch (selectedTab) {
       case 'history': return renderHistoryTab();
-      case 'prs': return renderPRsTab();
+      case 'weight': return renderWeightTab();
       case 'trends': return renderTrendsTab();
       case 'insights': return renderInsightsTab();
       default: return renderHistoryTab();
@@ -1319,6 +1463,7 @@ export default function ProgressScreen() {
   return (
     <View style={[styles.container, { backgroundColor: BrandColors.background }]}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {renderProfileSection()}
         {renderTabs()}
         {renderTabContent()}
       </ScrollView>
@@ -2065,6 +2210,128 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   exerciseTagText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  profileSection: {
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginBottom: 16,
+    marginTop: 8,
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  profileStats: {
+    flexDirection: 'row',
+    gap: 24,
+  },
+  profileStat: {
+    alignItems: 'flex-start',
+  },
+  profileStatValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  profileStatLabel: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  weightProgressCard: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  weightProgressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  weightProgressColumn: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  weightProgressLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  weightProgressValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  progressBarContainer: {
+    marginTop: 8,
+  },
+  progressBarBackground: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  progressBarText: {
+    fontSize: 12,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  weightEntryCard: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  weightEntryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  weightEntryLeft: {
+    flex: 1,
+  },
+  weightEntryRight: {
+    alignItems: 'flex-end',
+  },
+  weightEntryDate: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  weightEntryTime: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  weightEntryValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  weightEntryChange: {
     fontSize: 12,
     fontWeight: '600',
   },

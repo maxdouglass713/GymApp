@@ -23,6 +23,7 @@
     "expo-barcode-scanner": "^13.0.1",
     "expo-camera": "^17.0.8",
     "expo-constants": "~18.0.9",
+    "expo-dev-client": "~6.0.18",
     "expo-font": "~14.0.8",
     "expo-haptics": "~15.0.7",
     "expo-image": "~3.0.8",
@@ -49,6 +50,8 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.5",
+    "@expo/metro-runtime": "^6.1.2",
     "@types/react": "~19.1.10",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",

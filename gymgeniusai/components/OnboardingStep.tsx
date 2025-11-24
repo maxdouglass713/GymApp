@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, NativeSyntheticEvent, NativeScrollEvent, Keyboard } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { BrandColors } from '@/constants/theme';
+import { BrandColors, Typography, Spacing, BorderRadius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOnboardingStore } from '@/stores/onboardingStore';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 
 interface OnboardingStepProps {
   step: number;
@@ -12,13 +13,7 @@ interface OnboardingStepProps {
 export default function OnboardingStep({ step }: OnboardingStepProps) {
   const colorScheme = useColorScheme();
   const colors = BrandColors;
-  const { data, updateData, currentStep, setCurrentStep, totalSteps } = useOnboardingStore();
-
-  const advanceToNextStep = useCallback(() => {
-    if (currentStep < totalSteps - 1) {
-      setCurrentStep(currentStep + 1);
-    }
-  }, [currentStep, setCurrentStep, totalSteps]);
+  const { data, updateData } = useOnboardingStore();
 
   const renderStep = () => {
     switch (step) {
@@ -28,7 +23,6 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
             colors={colors}
             data={data}
             updateData={updateData}
-            onComplete={advanceToNextStep}
           />
         );
       case 1:
@@ -37,7 +31,6 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
             colors={colors}
             data={data}
             updateData={updateData}
-            onComplete={advanceToNextStep}
           />
         );
       case 2:
@@ -46,7 +39,6 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
             colors={colors}
             data={data}
             updateData={updateData}
-            onComplete={advanceToNextStep}
           />
         );
       case 3:
@@ -74,7 +66,7 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
 }
 
 // Birthday Step
-function BirthdayStep({ colors, data, updateData, onComplete }: any) {
+function BirthdayStep({ colors, data, updateData }: any) {
   const today = useMemo(() => new Date(), []);
   const [month, setMonth] = useState<string>(data.birthday ? (data.birthday.getMonth() + 1).toString() : '');
   const [day, setDay] = useState<string>(data.birthday ? data.birthday.getDate().toString() : '');
@@ -82,25 +74,6 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
   const monthInputRef = useRef<TextInput>(null);
   const dayInputRef = useRef<TextInput>(null);
   const yearInputRef = useRef<TextInput>(null);
-  const autoAdvanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const cancelAutoAdvance = useCallback(() => {
-    if (autoAdvanceTimeoutRef.current) {
-      clearTimeout(autoAdvanceTimeoutRef.current);
-      autoAdvanceTimeoutRef.current = null;
-    }
-  }, []);
-
-  const triggerAutoAdvance = useCallback(() => {
-    if (!onComplete) {
-      return;
-    }
-    cancelAutoAdvance();
-    autoAdvanceTimeoutRef.current = setTimeout(() => {
-      onComplete();
-      autoAdvanceTimeoutRef.current = null;
-    }, 500);
-  }, [cancelAutoAdvance, onComplete]);
 
   const parsedDate = useMemo(() => {
     if (month && day && year && year.length === 4) {
@@ -131,16 +104,6 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
       updateData({ birthday });
     }
   }, [parsedDate, updateData]);
-
-  useEffect(() => {
-    if (parsedDate) {
-      triggerAutoAdvance();
-    } else {
-      cancelAutoAdvance();
-    }
-
-    return cancelAutoAdvance;
-  }, [cancelAutoAdvance, parsedDate, triggerAutoAdvance]);
 
   const handleMonthChange = (text: string) => {
     const cleanedText = text.replace(/[^0-9]/g, '');
@@ -203,20 +166,28 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
     return null;
   }, [parsedDate, today]);
 
+  const birthdayColor = '#4FC3F7'; // Light blue
+
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">When's your birthday?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        We'll use this to personalize your fitness recommendations (Optional)
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: birthdayColor + '30' }]}>
+          <IconSymbol name="calendar" size={32} color={birthdayColor} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>When's your birthday?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          We'll use this to personalize your fitness recommendations (Optional)
+        </Text>
+      </View>
 
       <View style={styles.birthdayContainer}>
         <View style={styles.birthdayInputWrapper}>
           <TextInput
             style={[styles.birthdayInput, { 
               color: colors.text, 
-              borderColor: colors.icon,
-              backgroundColor: colors.background 
+              borderColor: month ? birthdayColor : colors.gray800,
+              backgroundColor: colors.background,
+              borderWidth: month ? 3 : 1,
             }]}
             ref={monthInputRef}
             value={month}
@@ -230,17 +201,18 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
             onSubmitEditing={() => dayInputRef.current?.focus()}
             blurOnSubmit={false}
           />
-          <Text style={[styles.birthdayLabel, { color: BrandColors.text }]}>Month</Text>
+          <Text style={[styles.birthdayLabel, { color: month ? birthdayColor : BrandColors.text }]}>Month</Text>
         </View>
 
-        <Text style={[styles.birthdaySeparator, { color: colors.text }]}>/</Text>
+        <Text style={[styles.birthdaySeparator, { color: birthdayColor, fontSize: Typography.fontSize['2xl'] }]}>/</Text>
 
         <View style={styles.birthdayInputWrapper}>
           <TextInput
             style={[styles.birthdayInput, { 
               color: colors.text, 
-              borderColor: colors.icon,
-              backgroundColor: colors.background 
+              borderColor: day ? birthdayColor : colors.gray800,
+              backgroundColor: colors.background,
+              borderWidth: day ? 3 : 1,
             }]}
             ref={dayInputRef}
             value={day}
@@ -254,17 +226,18 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
             onSubmitEditing={() => yearInputRef.current?.focus()}
             blurOnSubmit={false}
           />
-          <Text style={[styles.birthdayLabel, { color: BrandColors.text }]}>Day</Text>
+          <Text style={[styles.birthdayLabel, { color: day ? birthdayColor : BrandColors.text }]}>Day</Text>
         </View>
 
-        <Text style={[styles.birthdaySeparator, { color: colors.text }]}>/</Text>
+        <Text style={[styles.birthdaySeparator, { color: birthdayColor, fontSize: Typography.fontSize['2xl'] }]}>/</Text>
 
         <View style={styles.birthdayInputWrapper}>
           <TextInput
             style={[styles.birthdayInputYear, { 
               color: colors.text, 
-              borderColor: colors.icon,
-              backgroundColor: colors.background 
+              borderColor: year && year.length === 4 ? birthdayColor : colors.gray800,
+              backgroundColor: colors.background,
+              borderWidth: year && year.length === 4 ? 3 : 1,
             }]}
             ref={yearInputRef}
             value={year}
@@ -275,14 +248,17 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
             autoCorrect={false}
             maxLength={4}
           />
-          <Text style={[styles.birthdayLabel, { color: BrandColors.text }]}>Year</Text>
+          <Text style={[styles.birthdayLabel, { color: year && year.length === 4 ? birthdayColor : BrandColors.text }]}>Year</Text>
         </View>
       </View>
 
       {age !== null && age > 0 && (
-        <Text style={[styles.ageDisplay, { color: BrandColors.accent }]}>
-          Age: {age} years old
-        </Text>
+        <View style={[styles.ageDisplayContainer, { backgroundColor: birthdayColor + '20', borderColor: birthdayColor }]}>
+          <IconSymbol name="person.fill" size={20} color={birthdayColor} />
+          <Text style={[styles.ageDisplay, { color: birthdayColor }]}>
+            Age: {age} years old
+          </Text>
+        </View>
       )}
 
     </View>
@@ -290,13 +266,12 @@ function BirthdayStep({ colors, data, updateData, onComplete }: any) {
 }
 
 // Height Step
-function HeightStep({ colors, data, updateData, onComplete }: any) {
+function HeightStep({ colors, data, updateData }: any) {
   const [unit, setUnit] = useState<'ft/in' | 'cm'>(data.height?.unit || 'ft/in');
   const feetInputRef = useRef<TextInput>(null);
   const inchesInputRef = useRef<TextInput>(null);
   const cmInputRef = useRef<TextInput>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoAdvanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancelKeyboardDismiss = useCallback(() => {
     if (dismissTimeoutRef.current) {
@@ -313,30 +288,11 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
     }, 500);
   }, [cancelKeyboardDismiss]);
 
-  const cancelAutoAdvance = useCallback(() => {
-    if (autoAdvanceTimeoutRef.current) {
-      clearTimeout(autoAdvanceTimeoutRef.current);
-      autoAdvanceTimeoutRef.current = null;
-    }
-  }, []);
-
-  const triggerAutoAdvance = useCallback(() => {
-    if (!onComplete) {
-      return;
-    }
-    cancelAutoAdvance();
-    autoAdvanceTimeoutRef.current = setTimeout(() => {
-      onComplete();
-      autoAdvanceTimeoutRef.current = null;
-    }, 600);
-  }, [cancelAutoAdvance, onComplete]);
-
   useEffect(() => {
     return () => {
       cancelKeyboardDismiss();
-      cancelAutoAdvance();
     };
-  }, [cancelAutoAdvance, cancelKeyboardDismiss]);
+  }, [cancelKeyboardDismiss]);
 
   // Parse existing data or use empty defaults
   const parseExistingHeight = () => {
@@ -387,19 +343,13 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
 
       if (feetValue && inches) {
         updateData({ height: { value: `${feetValue}ft ${inches}in`, unit: 'ft/in' } });
-        triggerAutoAdvance();
       } else if (!feetValue) {
         updateData({ height: { value: '', unit: 'ft/in' } });
-        cancelAutoAdvance();
-      } else {
-        cancelAutoAdvance();
       }
 
       if (feetValue.length === 1) {
         inchesInputRef.current?.focus();
       }
-    } else {
-      cancelAutoAdvance();
     }
   };
 
@@ -414,7 +364,6 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
       setInches('');
       updateData({ height: { value: '', unit: 'ft/in' } });
       cancelKeyboardDismiss();
-      cancelAutoAdvance();
       return;
     }
 
@@ -424,12 +373,7 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
 
       if (feet) {
         scheduleKeyboardDismiss();
-        triggerAutoAdvance();
-      } else {
-        cancelAutoAdvance();
       }
-    } else {
-      cancelAutoAdvance();
     }
   };
 
@@ -444,7 +388,6 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
       setCm('');
       updateData({ height: { value: '', unit: 'cm' } });
       cancelKeyboardDismiss();
-      cancelAutoAdvance();
       return;
     }
 
@@ -452,9 +395,6 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
       setCm(nextValue);
       updateData({ height: { value: nextValue, unit: 'cm' } });
       scheduleKeyboardDismiss();
-      triggerAutoAdvance();
-    } else {
-      cancelAutoAdvance();
     }
   };
 
@@ -468,7 +408,6 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
 
   const switchUnit = () => {
     cancelKeyboardDismiss();
-    cancelAutoAdvance();
 
     if (unit === 'ft/in') {
       const feetNum = parseInt(feet);
@@ -478,7 +417,6 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
         setCm(convertedCm.toString());
         setUnit('cm');
         updateData({ height: { value: convertedCm.toString(), unit: 'cm' } });
-        triggerAutoAdvance();
       } else {
         // If no valid values, just switch unit and clear fields
         setFeet('');
@@ -494,7 +432,6 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
         setInches(converted.inches.toString());
         setUnit('ft/in');
         updateData({ height: { value: `${converted.feet}ft ${converted.inches}in`, unit: 'ft/in' } });
-        triggerAutoAdvance();
       } else {
         // If no valid values, just switch unit and clear fields
         setCm('');
@@ -504,12 +441,19 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
     }
   };
 
+  const heightColor = '#4FC3F7'; // Light blue
+
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">What's your height?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        Enter your height below (e.g., 5'8" or 173 cm)
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: heightColor + '30' }]}>
+          <IconSymbol name="ruler.fill" size={32} color={heightColor} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>What's your height?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          Enter your height below (e.g., 5'8" or 173 cm)
+        </Text>
+      </View>
 
       {unit === 'ft/in' ? (
         <View style={styles.heightInputsContainer}>
@@ -518,8 +462,9 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
               <TextInput
                 style={[styles.heightInput, { 
                   color: colors.text, 
-                  borderColor: colors.icon,
-                  backgroundColor: colors.background 
+                  borderColor: feet ? heightColor : colors.gray800,
+                  backgroundColor: colors.background,
+                  borderWidth: feet ? 3 : 1,
                 }]}
                 ref={feetInputRef}
                 value={feet}
@@ -532,15 +477,16 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
                 returnKeyType="next"
                 onSubmitEditing={() => inchesInputRef.current?.focus()}
               />
-              <Text style={[styles.heightLabel, { color: BrandColors.text }]}>FT</Text>
+              <Text style={[styles.heightLabel, { color: feet ? heightColor : BrandColors.text }]}>FT</Text>
             </View>
             
             <View style={styles.heightInputWrapper}>
               <TextInput
                 style={[styles.heightInput, { 
                   color: colors.text, 
-                  borderColor: colors.icon,
-                  backgroundColor: colors.background 
+                  borderColor: inches ? heightColor : colors.gray800,
+                  backgroundColor: colors.background,
+                  borderWidth: inches ? 3 : 1,
                 }]}
                 ref={inchesInputRef}
                 value={inches}
@@ -556,7 +502,7 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
                   Keyboard.dismiss();
                 }}
               />
-              <Text style={[styles.heightLabel, { color: BrandColors.text }]}>INCH</Text>
+              <Text style={[styles.heightLabel, { color: inches ? heightColor : BrandColors.text }]}>INCH</Text>
             </View>
           </View>
         </View>
@@ -565,8 +511,9 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
           <TextInput
             style={[styles.textInput, { 
               color: colors.text, 
-              borderColor: colors.icon,
-              backgroundColor: colors.background 
+              borderColor: cm ? heightColor : colors.gray800,
+              backgroundColor: colors.background,
+              borderWidth: cm ? 3 : 1,
             }]}
             ref={cmInputRef}
             value={cm}
@@ -582,14 +529,26 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
               Keyboard.dismiss();
             }}
           />
-          <Text style={[styles.inputLabel, { color: BrandColors.text }]}>
+          <Text style={[styles.inputLabel, { color: cm ? heightColor : BrandColors.text }]}>
             Centimeters (cm)
           </Text>
         </View>
       )}
 
-      <TouchableOpacity onPress={switchUnit} style={styles.metricToggle} activeOpacity={0.8}>
-        <Text style={{ color: '#FFFFFF' }}>
+      <TouchableOpacity 
+        onPress={switchUnit} 
+        style={[styles.metricToggle, { 
+          backgroundColor: heightColor + '20',
+          borderColor: heightColor,
+          borderWidth: 1,
+          paddingVertical: Spacing.md,
+          paddingHorizontal: Spacing.lg,
+          borderRadius: BorderRadius.lg,
+        }]} 
+        activeOpacity={0.8}
+      >
+        <IconSymbol name="arrow.left.arrow.right" size={16} color={heightColor} />
+        <Text style={{ color: heightColor, marginLeft: Spacing.sm, fontSize: Typography.fontSize.base, fontWeight: Typography.fontWeight.semibold }}>
           {unit === 'ft/in' ? 'Switch to cm' : 'Switch to ft/in'}
         </Text>
       </TouchableOpacity>
@@ -598,12 +557,26 @@ function HeightStep({ colors, data, updateData, onComplete }: any) {
 }
 
 // Weight Step
-function WeightStep({ colors, data, updateData, onComplete }: any) {
+function WeightStep({ colors, data, updateData }: any) {
   const cameFromMetric = (data.height?.unit === 'cm');
   const [unit, setUnit] = useState<'lb' | 'kg'>(data.weight?.unit || (cameFromMetric ? 'kg' : 'lb'));
   const weightInputRef = useRef<TextInput>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoAdvanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Get current weight from daily weights
+  const { useWeightStore } = require('@/stores/weightStore');
+  const { dailyWeights } = useWeightStore();
+  
+  // Get most recent weight from daily weights
+  const currentWeight = React.useMemo(() => {
+    if (dailyWeights && dailyWeights.length > 0) {
+      const sorted = [...dailyWeights].sort((a, b) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      return sorted[0].weight;
+    }
+    return null;
+  }, [dailyWeights]);
 
   const cancelKeyboardDismiss = useCallback(() => {
     if (dismissTimeoutRef.current) {
@@ -620,30 +593,11 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
     }, 500);
   }, [cancelKeyboardDismiss]);
 
-  const cancelAutoAdvance = useCallback(() => {
-    if (autoAdvanceTimeoutRef.current) {
-      clearTimeout(autoAdvanceTimeoutRef.current);
-      autoAdvanceTimeoutRef.current = null;
-    }
-  }, []);
-
-  const triggerAutoAdvance = useCallback(() => {
-    if (!onComplete) {
-      return;
-    }
-    cancelAutoAdvance();
-    autoAdvanceTimeoutRef.current = setTimeout(() => {
-      onComplete();
-      autoAdvanceTimeoutRef.current = null;
-    }, 600);
-  }, [cancelAutoAdvance, onComplete]);
-
   useEffect(() => {
     return () => {
       cancelKeyboardDismiss();
-      cancelAutoAdvance();
     };
-  }, [cancelAutoAdvance, cancelKeyboardDismiss]);
+  }, [cancelKeyboardDismiss]);
 
   // Parse existing data or use empty defaults
   const parseExistingWeight = () => {
@@ -685,15 +639,8 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
 
     if (cleanedText) {
       scheduleKeyboardDismiss();
-      const numericWeight = parseFloat(cleanedText);
-      if (!Number.isNaN(numericWeight) && numericWeight > 0) {
-        triggerAutoAdvance();
-      } else {
-        cancelAutoAdvance();
-      }
     } else {
       cancelKeyboardDismiss();
-      cancelAutoAdvance();
     }
   };
 
@@ -702,7 +649,6 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
 
   const switchUnit = () => {
     cancelKeyboardDismiss();
-    cancelAutoAdvance();
 
     const currentValue = parseFloat(weightValue);
     if (!isNaN(currentValue) && currentValue > 0) {
@@ -711,13 +657,11 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
         setWeightValue(converted.toString());
         setUnit('kg');
         updateData({ weight: { value: converted.toString(), unit: 'kg' } });
-        triggerAutoAdvance();
       } else {
         const converted = convertKgToLb(currentValue);
         setWeightValue(converted.toString());
         setUnit('lb');
         updateData({ weight: { value: converted.toString(), unit: 'lb' } });
-        triggerAutoAdvance();
       }
     } else {
       // If no valid values, just switch unit and clear field
@@ -727,19 +671,35 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
     }
   };
 
+  const weightColor = '#4FC3F7'; // Light blue
+
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">What's your weight?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        Used to calculate your BMI and fitness recommendations
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: weightColor + '30' }]}>
+          <IconSymbol name="scalemass.fill" size={32} color={weightColor} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>What's your weight?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          Used to calculate your BMI and fitness recommendations
+        </Text>
+        {currentWeight && (
+          <View style={[styles.currentWeightContainer, { backgroundColor: weightColor + '20', borderColor: weightColor }]}>
+            <IconSymbol name="scalemass.fill" size={16} color={weightColor} />
+            <Text style={[styles.currentWeightText, { color: weightColor }]}>
+              Current weight: {currentWeight.toFixed(1)} {unit}
+            </Text>
+          </View>
+        )}
+      </View>
 
       <View style={styles.inputContainer}>
         <TextInput
           style={[styles.textInput, { 
             color: colors.text, 
-            borderColor: colors.icon,
-            backgroundColor: colors.background 
+            borderColor: weightValue ? weightColor : colors.gray800,
+            backgroundColor: colors.background,
+            borderWidth: weightValue ? 3 : 1,
           }]}
           ref={weightInputRef}
           value={weightValue}
@@ -755,13 +715,27 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
             Keyboard.dismiss();
           }}
         />
-        <Text style={[styles.inputLabel, { color: BrandColors.text }]}>
+        <Text style={[styles.inputLabel, { color: weightValue ? weightColor : BrandColors.text }]}>
           {unit === 'lb' ? 'Pounds (lb)' : 'Kilograms (kg)'}
         </Text>
       </View>
 
-      <TouchableOpacity onPress={switchUnit} style={styles.metricToggle} activeOpacity={0.8}>
-        <Text style={{ color: '#FFFFFF' }}>{unit === 'lb' ? 'Switch to kg' : 'Switch to lb'}</Text>
+      <TouchableOpacity 
+        onPress={switchUnit} 
+        style={[styles.metricToggle, { 
+          backgroundColor: weightColor + '20',
+          borderColor: weightColor,
+          borderWidth: 1,
+          paddingVertical: Spacing.md,
+          paddingHorizontal: Spacing.lg,
+          borderRadius: BorderRadius.lg,
+        }]} 
+        activeOpacity={0.8}
+      >
+        <IconSymbol name="arrow.left.arrow.right" size={16} color={weightColor} />
+        <Text style={{ color: weightColor, marginLeft: Spacing.sm, fontSize: Typography.fontSize.base, fontWeight: Typography.fontWeight.semibold }}>
+          {unit === 'lb' ? 'Switch to kg' : 'Switch to lb'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -770,38 +744,78 @@ function WeightStep({ colors, data, updateData, onComplete }: any) {
 // Sex Step (Optional)
 function SexStep({ colors, data, updateData }: any) {
   const options = [
-    { value: 'male', label: 'Male' },
-    { value: 'female', label: 'Female' },
+    { 
+      value: 'male', 
+      label: 'Male',
+      icon: 'person.fill',
+      iconColor: '#00D4FF', // Bright blue
+      backgroundColor: '#00D4FF20', // Light blue background
+    },
+    { 
+      value: 'female', 
+      label: 'Female',
+      icon: 'person.fill',
+      iconColor: '#FF69B4', // Bright pink
+      backgroundColor: '#FF69B420', // Light pink background
+    },
   ];
 
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]}>Sex (Optional)</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        This helps us personalize your fitness recommendations
-      </Text>
+      {/* Header with Lightning Bolt Icon */}
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+          <IconSymbol name="bolt.fill" size={32} color={BrandColors.accent} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>Choose Your Gender</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          Select Your Gender For Personalized Health And Nutrition Recommendations
+        </Text>
+      </View>
       
-      <View style={styles.optionsContainer}>
-        {options.map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              { 
-                backgroundColor: data.sex === option.value ? BrandColors.accent : 'transparent',
-                borderColor: BrandColors.accent
-              }
-            ]}
-            onPress={() => updateData({ sex: option.value })}
-          >
-            <Text style={[
-              styles.optionButtonText,
-              { color: data.sex === option.value ? '#FFFFFF' : '#FFFFFF' }
-            ]}>
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.genderOptionsContainer}>
+        {options.map((option) => {
+          const isSelected = data.sex === option.value;
+          return (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.genderOptionCard,
+                { 
+                  backgroundColor: isSelected ? option.backgroundColor : colors.background,
+                  borderColor: isSelected ? option.iconColor : colors.gray800,
+                  borderWidth: isSelected ? 3 : 1,
+                }
+              ]}
+              onPress={() => updateData({ sex: option.value })}
+              activeOpacity={0.7}
+            >
+              <View style={[
+                styles.genderIconCircle,
+                {
+                  backgroundColor: isSelected 
+                    ? option.iconColor
+                    : option.backgroundColor,
+                }
+              ]}>
+                <IconSymbol 
+                  name={option.icon} 
+                  size={32} 
+                  color={isSelected ? '#fff' : option.iconColor} 
+                />
+              </View>
+              <Text style={[
+                styles.genderOptionLabel,
+                { 
+                  color: isSelected ? option.iconColor : colors.text,
+                  fontSize: Typography.fontSize.xl,
+                }
+              ]}>
+                {option.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -810,45 +824,99 @@ function SexStep({ colors, data, updateData }: any) {
 // Experience Step
 function ExperienceStep({ colors, data, updateData }: any) {
   const options = [
-    { value: 'beginner', label: 'Beginner', description: 'New to working out' },
-    { value: 'intermediate', label: 'Intermediate', description: 'Some experience' },
-    { value: 'advanced', label: 'Advanced', description: 'Experienced lifter' },
+    { 
+      value: 'beginner', 
+      label: 'Beginner', 
+      description: 'New to working out',
+      icon: 'star.fill',
+      iconColor: '#00FF88', // Green
+      backgroundColor: '#00FF8820',
+    },
+    { 
+      value: 'intermediate', 
+      label: 'Intermediate', 
+      description: 'Some experience',
+      icon: 'star.fill',
+      iconColor: '#FFD700', // Gold
+      backgroundColor: '#FFD70020',
+    },
+    { 
+      value: 'advanced', 
+      label: 'Advanced', 
+      description: 'Experienced lifter',
+      icon: 'star.fill',
+      iconColor: '#FF6B35', // Orange
+      backgroundColor: '#FF6B3520',
+    },
   ];
 
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]}>What's your exercise experience?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        This helps us create the right workout intensity for your fitness level
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+          <IconSymbol name="bolt.fill" size={32} color={BrandColors.accent} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>What's your exercise experience?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          This helps us create the right workout intensity for your fitness level
+        </Text>
+      </View>
       
-      <View style={styles.optionsContainer}>
-        {options.map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              { 
-                backgroundColor: data.exerciseExperience === option.value ? BrandColors.accent : 'transparent',
-                borderColor: BrandColors.accent
-              }
-            ]}
-            onPress={() => updateData({ exerciseExperience: option.value })}
-          >
-            <Text style={[
-              styles.optionButtonText,
-              { color: data.exerciseExperience === option.value ? '#FFFFFF' : '#FFFFFF' }
-            ]}>
-              {option.label}
-            </Text>
-            <Text style={[
-              styles.optionDescription,
-              { color: data.exerciseExperience === option.value ? '#FFFFFF' : '#FFFFFF' }
-            ]}>
-              {option.description}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.genderOptionsContainer}>
+        {options.map((option) => {
+          const isSelected = data.exerciseExperience === option.value;
+          return (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.genderOptionCard,
+                { 
+                  backgroundColor: isSelected ? option.backgroundColor : colors.background,
+                  borderColor: isSelected ? option.iconColor : colors.gray800,
+                  borderWidth: isSelected ? 3 : 1,
+                }
+              ]}
+              onPress={() => updateData({ exerciseExperience: option.value })}
+              activeOpacity={0.7}
+            >
+              <View style={[
+                styles.genderIconCircle,
+                {
+                  backgroundColor: isSelected 
+                    ? option.iconColor
+                    : option.backgroundColor,
+                }
+              ]}>
+                <IconSymbol 
+                  name={option.icon} 
+                  size={32} 
+                  color={isSelected ? '#fff' : option.iconColor} 
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[
+                  styles.genderOptionLabel,
+                  { 
+                    color: isSelected ? option.iconColor : colors.text,
+                    fontSize: Typography.fontSize.xl,
+                    marginBottom: 4,
+                  }
+                ]}>
+                  {option.label}
+                </Text>
+                <Text style={[
+                  styles.optionDescription,
+                  { 
+                    color: isSelected ? colors.text : colors.textSecondary,
+                    fontSize: Typography.fontSize.sm,
+                  }
+                ]}>
+                  {option.description}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -857,14 +925,71 @@ function ExperienceStep({ colors, data, updateData }: any) {
 // Goal Step
 function GoalStep({ colors, data, updateData }: any) {
   const options = [
-    { value: 'build_muscle', label: 'Build Muscle', description: 'Gain strength and size' },
-    { value: 'lose_fat', label: 'Lose Fat', description: 'Burn calories and lean out' },
-    { value: 'improve_fitness', label: 'Improve Fitness', description: 'General health and endurance' },
-    { value: 'gain_strength', label: 'Gain Strength', description: 'Lift heavier and get stronger' },
-    { value: 'improve_endurance', label: 'Improve Endurance', description: 'Increase stamina and cardio capacity' },
-    { value: 'increase_power', label: 'Increase Power', description: 'Boost explosive athleticism' },
-    { value: 'improve_flexibility', label: 'Improve Flexibility', description: 'Enhance mobility and range of motion' },
-    { value: 'general_health', label: 'General Health', description: 'Feel better and stay healthy' },
+    { 
+      value: 'build_muscle', 
+      label: 'Build Muscle', 
+      description: 'Gain strength and size', 
+      icon: 'figure.strengthtraining.traditional',
+      iconColor: '#FF6B35', // Orange
+      backgroundColor: '#FF6B3520',
+    },
+    { 
+      value: 'lose_fat', 
+      label: 'Lose Fat', 
+      description: 'Burn calories and lean out', 
+      icon: 'flame.fill',
+      iconColor: '#FF4500', // Fire orange-red (mix of orange, yellow, red)
+      backgroundColor: '#FF450020',
+      isFire: true, // Special flag for fire gradient effect
+    },
+    { 
+      value: 'improve_fitness', 
+      label: 'Improve Fitness', 
+      description: 'General health and endurance', 
+      icon: 'heart.fill',
+      iconColor: '#DC143C', // Red
+      backgroundColor: '#DC143C20',
+    },
+    { 
+      value: 'gain_strength', 
+      label: 'Gain Strength', 
+      description: 'Lift heavier and get stronger', 
+      icon: 'dumbbell.fill',
+      iconColor: '#808080', // Gray (like a real dumbbell)
+      backgroundColor: '#80808020',
+    },
+    { 
+      value: 'improve_endurance', 
+      label: 'Improve Endurance', 
+      description: 'Increase stamina and cardio capacity', 
+      icon: 'figure.run',
+      iconColor: '#00FF88', // Green
+      backgroundColor: '#00FF8820',
+    },
+    { 
+      value: 'increase_power', 
+      label: 'Increase Power', 
+      description: 'Boost explosive athleticism', 
+      icon: 'bolt.fill',
+      iconColor: BrandColors.accent, // Blue lightning bolt (#00D4FF)
+      backgroundColor: BrandColors.accent + '20',
+    },
+    { 
+      value: 'improve_flexibility', 
+      label: 'Improve Flexibility', 
+      description: 'Enhance mobility and range of motion', 
+      icon: 'figure.flexibility',
+      iconColor: '#9D4EDD', // Purple
+      backgroundColor: '#9D4EDD20',
+    },
+    { 
+      value: 'general_health', 
+      label: 'General Health', 
+      description: 'Feel better and stay healthy', 
+      icon: 'cross.case.fill', // Med kit icon
+      iconColor: '#DC143C', // Red med kit
+      backgroundColor: '#00FF8820', // Green background
+    },
   ];
 
   const selectedGoals: string[] = Array.isArray(data.goals) ? data.goals : [];
@@ -904,38 +1029,101 @@ function GoalStep({ colors, data, updateData }: any) {
 
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]}>What are your fitness goals?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        Pick as many as you want—we’ll tailor your workouts and nutrition around them
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+          <IconSymbol name="bolt.fill" size={32} color={BrandColors.accent} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>What are your fitness goals?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          Pick as many as you want—we'll tailor your workouts and nutrition around them
+        </Text>
+      </View>
       
-      <View style={styles.optionsContainer}>
+      <View style={styles.genderOptionsContainer}>
         {options.map((option) => {
           const isSelected = selectedGoals.includes(option.value);
           return (
             <TouchableOpacity
               key={option.value}
               style={[
-                styles.optionButton,
+                styles.genderOptionCard,
                 { 
-                  backgroundColor: isSelected ? BrandColors.accent : 'transparent',
-                  borderColor: BrandColors.accent
+                  backgroundColor: isSelected ? (option.value === 'general_health' ? '#00FF8820' : option.backgroundColor) : colors.background,
+                  borderColor: isSelected ? (option.value === 'general_health' ? '#00FF88' : option.iconColor) : colors.gray800,
+                  borderWidth: isSelected ? 3 : 1,
                 }
               ]}
               onPress={() => toggleGoal(option.value)}
+              activeOpacity={0.7}
             >
-              <Text style={[
-                styles.optionButtonText,
-                { color: isSelected ? '#FFFFFF' : '#FFFFFF' }
+              <View style={[
+                styles.genderIconCircle,
+                {
+                  backgroundColor: isSelected 
+                    ? option.iconColor
+                    : option.backgroundColor,
+                },
+                // Special styling for fire icon (Lose Fat)
+                option.isFire && {
+                  backgroundColor: isSelected 
+                    ? '#FF4500' // Fire orange-red
+                    : '#FF450020',
+                },
+                // Special styling for gray dumbbell (Gain Strength)
+                option.value === 'gain_strength' && {
+                  backgroundColor: isSelected 
+                    ? '#808080' // Gray
+                    : '#80808020',
+                },
+                // Special styling for General Health (green background, red icon)
+                option.value === 'general_health' && {
+                  backgroundColor: isSelected 
+                    ? '#00FF88' // Green background
+                    : '#00FF8820',
+                },
               ]}>
-                {option.label}
-              </Text>
-              <Text style={[
-                styles.optionDescription,
-                { color: isSelected ? '#FFFFFF' : '#FFFFFF' }
-              ]}>
-                {option.description}
-              </Text>
+                {option.isFire && isSelected ? (
+                  // Fire effect with layered colors (orange, yellow, red)
+                  <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                    <View style={{ position: 'absolute' }}>
+                      <IconSymbol name={option.icon} size={32} color="#FFD700" />
+                    </View>
+                    <View style={{ position: 'absolute' }}>
+                      <IconSymbol name={option.icon} size={28} color="#FF6B35" />
+                    </View>
+                    <View style={{ position: 'absolute' }}>
+                      <IconSymbol name={option.icon} size={24} color="#FF0000" />
+                    </View>
+                  </View>
+                ) : (
+                  <IconSymbol 
+                    name={option.icon} 
+                    size={32} 
+                    color={isSelected ? (option.value === 'general_health' ? '#DC143C' : (option.value === 'gain_strength' ? '#fff' : '#fff')) : option.iconColor} 
+                  />
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[
+                  styles.genderOptionLabel,
+                  { 
+                    color: isSelected ? (option.value === 'general_health' ? '#00FF88' : option.iconColor) : colors.text,
+                    fontSize: Typography.fontSize.xl,
+                    marginBottom: 4,
+                  }
+                ]}>
+                  {option.label}
+                </Text>
+                <Text style={[
+                  styles.optionDescription,
+                  { 
+                    color: isSelected ? colors.text : colors.textSecondary,
+                    fontSize: Typography.fontSize.sm,
+                  }
+                ]}>
+                  {option.description}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -963,45 +1151,99 @@ function GoalStep({ colors, data, updateData }: any) {
 // Equipment Step
 function EquipmentStep({ colors, data, updateData }: any) {
   const options = [
-    { value: 'home_only', label: 'Home Only', description: 'Bodyweight and minimal equipment' },
-    { value: 'gym_access', label: 'Gym Access', description: 'Full gym equipment available' },
-    { value: 'both', label: 'Both', description: 'Mix of home and gym workouts' },
+    { 
+      value: 'home_only', 
+      label: 'Home Only', 
+      description: 'Bodyweight and minimal equipment',
+      icon: 'house.fill',
+      iconColor: '#9D4EDD', // Purple
+      backgroundColor: '#9D4EDD20',
+    },
+    { 
+      value: 'gym_access', 
+      label: 'Gym Access', 
+      description: 'Full gym equipment available',
+      icon: 'dumbbell.fill',
+      iconColor: '#00E5FF', // Cyan
+      backgroundColor: '#00E5FF20',
+    },
+    { 
+      value: 'both', 
+      label: 'Both', 
+      description: 'Mix of home and gym workouts',
+      icon: 'figure.strengthtraining.traditional',
+      iconColor: '#FFB800', // Yellow
+      backgroundColor: '#FFB80020',
+    },
   ];
 
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]}>What equipment do you have?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        This helps us create workouts you can actually do with your available equipment
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+          <IconSymbol name="bolt.fill" size={32} color={BrandColors.accent} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>What equipment do you have?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          This helps us create workouts you can actually do with your available equipment
+        </Text>
+      </View>
       
-      <View style={styles.optionsContainer}>
-        {options.map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              { 
-                backgroundColor: data.equipment === option.value ? BrandColors.accent : 'transparent',
-                borderColor: BrandColors.accent
-              }
-            ]}
-            onPress={() => updateData({ equipment: option.value })}
-          >
-            <Text style={[
-              styles.optionButtonText,
-              { color: data.equipment === option.value ? '#FFFFFF' : '#FFFFFF' }
-            ]}>
-              {option.label}
-            </Text>
-            <Text style={[
-              styles.optionDescription,
-              { color: data.equipment === option.value ? '#FFFFFF' : '#FFFFFF' }
-            ]}>
-              {option.description}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.genderOptionsContainer}>
+        {options.map((option) => {
+          const isSelected = data.equipment === option.value;
+          return (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.genderOptionCard,
+                { 
+                  backgroundColor: isSelected ? option.backgroundColor : colors.background,
+                  borderColor: isSelected ? option.iconColor : colors.gray800,
+                  borderWidth: isSelected ? 3 : 1,
+                }
+              ]}
+              onPress={() => updateData({ equipment: option.value })}
+              activeOpacity={0.7}
+            >
+              <View style={[
+                styles.genderIconCircle,
+                {
+                  backgroundColor: isSelected 
+                    ? option.iconColor
+                    : option.backgroundColor,
+                }
+              ]}>
+                <IconSymbol 
+                  name={option.icon} 
+                  size={32} 
+                  color={isSelected ? '#fff' : option.iconColor} 
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[
+                  styles.genderOptionLabel,
+                  { 
+                    color: isSelected ? option.iconColor : colors.text,
+                    fontSize: Typography.fontSize.xl,
+                    marginBottom: 4,
+                  }
+                ]}>
+                  {option.label}
+                </Text>
+                <Text style={[
+                  styles.optionDescription,
+                  { 
+                    color: isSelected ? colors.text : colors.textSecondary,
+                    fontSize: Typography.fontSize.sm,
+                  }
+                ]}>
+                  {option.description}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -1010,35 +1252,52 @@ function EquipmentStep({ colors, data, updateData }: any) {
 // Schedule Step
 function ScheduleStep({ colors, data, updateData }: any) {
   const days = [1, 2, 3, 4, 5, 6, 7];
+  const dayColor = '#4FC3F7'; // Light blue (same as birthday, height, weight)
 
   return (
     <View style={styles.stepContainer}>
-      <Text style={[styles.title, { color: colors.text }]}>How many days per week do you work out?</Text>
-      <Text style={[styles.subtitle, { color: '#FFFFFF' }]}>
-        Choose how often you want to work out each week
-      </Text>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+          <IconSymbol name="bolt.fill" size={32} color={BrandColors.accent} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>How many days per week do you work out?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          Choose how often you want to work out each week
+        </Text>
+      </View>
       
       <View style={styles.daysContainer}>
-        {days.map((day) => (
-          <TouchableOpacity
-            key={day}
-            style={[
-              styles.dayButton,
-              { 
-                backgroundColor: data.weeklySchedule === day ? BrandColors.accent : 'transparent',
-                borderColor: BrandColors.accent
-              }
-            ]}
-            onPress={() => updateData({ weeklySchedule: day })}
-          >
-            <Text style={[
-              styles.dayButtonText,
-              { color: data.weeklySchedule === day ? '#FFFFFF' : '#FFFFFF' }
-            ]}>
-              {day}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {days.map((day) => {
+          const isSelected = data.weeklySchedule === day;
+          return (
+            <TouchableOpacity
+              key={day}
+              style={[
+                styles.dayButton,
+                { 
+                  backgroundColor: isSelected ? dayColor : 'transparent',
+                  borderColor: dayColor,
+                  borderWidth: isSelected ? 3 : 1,
+                  width: 70,
+                  height: 70,
+                  borderRadius: 35,
+                }
+              ]}
+              onPress={() => updateData({ weeklySchedule: day })}
+              activeOpacity={0.7}
+            >
+              <Text style={[
+                styles.dayButtonText,
+                { 
+                  color: isSelected ? '#FFFFFF' : dayColor,
+                  fontSize: Typography.fontSize['2xl'],
+                }
+              ]}>
+                {day}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -1351,19 +1610,26 @@ const styles = StyleSheet.create({
   },
   textInput: {
     width: '100%',
-    height: 50,
+    height: 70,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 18,
-    fontFamily: 'ui-rounded',
+    borderRadius: BorderRadius.xl,
+    paddingHorizontal: 20,
+    fontSize: 24,
+    fontFamily: Typography.fontFamily,
     textAlign: 'center',
+    fontWeight: Typography.fontWeight.semibold,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   inputLabel: {
-    fontSize: 14,
-    marginTop: 8,
-    fontFamily: 'ui-rounded',
+    fontSize: Typography.fontSize.base,
+    marginTop: Spacing.md,
+    fontFamily: Typography.fontFamily,
     textAlign: 'center',
+    fontWeight: Typography.fontWeight.medium,
   },
   // Height input styles
   heightInputsContainer: {
@@ -1384,14 +1650,19 @@ const styles = StyleSheet.create({
   },
   heightInput: {
     width: '100%',
-    height: 60,
+    height: 70,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: BorderRadius.xl,
     paddingHorizontal: 16,
-    fontSize: 24,
-    fontFamily: 'ui-rounded',
+    fontSize: 28,
+    fontFamily: Typography.fontFamily,
     textAlign: 'center',
-    fontWeight: '600',
+    fontWeight: Typography.fontWeight.bold,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   heightLabel: {
     fontSize: 12,
@@ -1414,26 +1685,36 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
   birthdayInput: {
-    width: 70,
-    height: 60,
+    width: 80,
+    height: 70,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: BorderRadius.xl,
     paddingHorizontal: 8,
-    fontSize: 20,
-    fontFamily: 'ui-rounded',
+    fontSize: 24,
+    fontFamily: Typography.fontFamily,
     textAlign: 'center',
-    fontWeight: '600',
+    fontWeight: Typography.fontWeight.bold,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   birthdayInputYear: {
-    width: 100,
-    height: 60,
+    width: 110,
+    height: 70,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: BorderRadius.xl,
     paddingHorizontal: 8,
-    fontSize: 20,
-    fontFamily: 'ui-rounded',
+    fontSize: 24,
+    fontFamily: Typography.fontFamily,
     textAlign: 'center',
-    fontWeight: '600',
+    fontWeight: Typography.fontWeight.bold,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   birthdayLabel: {
     fontSize: 11,
@@ -1447,12 +1728,21 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginHorizontal: 4,
   },
+  ageDisplayContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    marginTop: Spacing.lg,
+    gap: Spacing.sm,
+  },
   ageDisplay: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 16,
-    fontFamily: 'ui-rounded',
-    textAlign: 'center',
+    fontSize: Typography.fontSize.lg,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
   },
   // Wheel pickers
   wheelsRow: {
@@ -1519,7 +1809,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   metricToggle: {
-    marginTop: 8,
+    marginTop: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   textArea: {
     width: '100%',
@@ -1600,15 +1893,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 12,
+    gap: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    marginTop: Spacing.md,
   },
   dayButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   dayButtonText: {
     fontSize: 18,
@@ -1635,6 +1935,81 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     fontFamily: 'ui-rounded',
+  },
+  // Gender selection styles
+  genderHeader: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  genderIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  genderTitle: {
+    fontSize: Typography.fontSize['3xl'],
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
+    marginBottom: Spacing.sm,
+    textAlign: 'center',
+  },
+  genderSubtitle: {
+    fontSize: Typography.fontSize.base,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    lineHeight: 22,
+    paddingHorizontal: Spacing.lg,
+  },
+  genderOptionsContainer: {
+    width: '100%',
+    gap: Spacing.lg,
+    paddingHorizontal: Spacing.sm,
+  },
+  genderOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.xl,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    minHeight: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  genderIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.lg,
+  },
+  genderOptionLabel: {
+    fontSize: Typography.fontSize.lg,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+    flex: 1,
+  },
+  currentWeightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginTop: Spacing.md,
+    gap: Spacing.xs,
+  },
+  currentWeightText: {
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
   },
 });
 
