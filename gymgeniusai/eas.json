@@ -7,15 +7,21 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "node": "22.x.x"
+      "env": {
+        "NPM_CONFIG_UNSAFE_PERM": "true"
+      }
     },
     "preview": {
       "distribution": "internal",
-      "node": "22.x.x"
+      "env": {
+        "NPM_CONFIG_UNSAFE_PERM": "true"
+      }
     },
     "production": {
       "autoIncrement": true,
-      "node": "22.x.x"
+      "env": {
+        "NPM_CONFIG_UNSAFE_PERM": "true"
+      }
     }
   },
   "submit": {
