@@ -4,10 +4,39 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useWorkoutStore } from '@/stores/workoutStore';
 
 export const useSharedWorkout = () => {
-  const { clearCurrentWorkout, setWorkoutTitle, addExercise, addSet, updateSet, setSelectedDate } = useWorkoutStore();
+  // Safely access store with error handling
+  let storeFunctions;
+  try {
+    storeFunctions = useWorkoutStore();
+  } catch (error) {
+    console.error('❌ Error accessing workout store in useSharedWorkout:', error);
+    // Return early if store is unavailable
+    return { sharedWorkoutLoadedRef: { current: false } };
+  }
+  
+  // Validate all store functions exist before using them
+  const clearCurrentWorkout = storeFunctions?.clearCurrentWorkout;
+  const setWorkoutTitle = storeFunctions?.setWorkoutTitle;
+  const addExercise = storeFunctions?.addExercise;
+  const addSet = storeFunctions?.addSet;
+  const updateSet = storeFunctions?.updateSet;
+  const setSelectedDate = storeFunctions?.setSelectedDate;
+  
+  // If any required function is missing, return early
+  if (!clearCurrentWorkout || !setWorkoutTitle || !addExercise || !addSet || !updateSet || !setSelectedDate) {
+    console.error('❌ Missing required store functions in useSharedWorkout');
+    return { sharedWorkoutLoadedRef: { current: false } };
+  }
+  
   const sharedWorkoutLoadedRef = useRef(false);
 
   const loadSharedWorkout = useCallback(async () => {
+    // Validate store functions are still valid before proceeding
+    if (!clearCurrentWorkout || !setWorkoutTitle || !addExercise || !addSet || !updateSet || !setSelectedDate) {
+      console.error('❌ Store functions not available in loadSharedWorkout');
+      return false;
+    }
+    
     // Add a small delay to ensure global data is set after navigation
     await new Promise(resolve => setTimeout(resolve, 100));
     
@@ -28,8 +57,13 @@ export const useSharedWorkout = () => {
     console.log('🎯 Shared workout data structure:', JSON.stringify(global.sharedWorkoutData, null, 2));
     
     try {
-      // Clear current workout first
-      clearCurrentWorkout();
+      // Clear current workout first - validate function exists
+      if (typeof clearCurrentWorkout === 'function') {
+        clearCurrentWorkout();
+      } else {
+        console.error('❌ clearCurrentWorkout is not a function');
+        return false;
+      }
       
       // Check if workout has an assigned date and set selected date to it
       const workoutData = global.sharedWorkoutData;
@@ -52,22 +86,37 @@ export const useSharedWorkout = () => {
       
       // Set selected date to the determined date (this ensures the workout appears on the correct date in calendar)
       if (workoutDateToUse) {
-        setSelectedDate(workoutDateToUse);
-        console.log('📅 Setting selected date to:', workoutDateToUse.toISOString().split('T')[0]);
+        if (typeof setSelectedDate === 'function') {
+          setSelectedDate(workoutDateToUse);
+          console.log('📅 Setting selected date to:', workoutDateToUse.toISOString().split('T')[0]);
+        } else {
+          console.error('❌ setSelectedDate is not a function');
+        }
         
         // Also ensure currentWorkout.date is set to the assigned date
-        const currentState = useWorkoutStore.getState();
-        useWorkoutStore.setState({
-          currentWorkout: {
-            ...currentState.currentWorkout,
-            date: workoutDateToUse.toISOString().split('T')[0],
+        try {
+          const currentState = useWorkoutStore.getState();
+          if (currentState && typeof useWorkoutStore.setState === 'function') {
+            useWorkoutStore.setState({
+              currentWorkout: {
+                ...currentState.currentWorkout,
+                date: workoutDateToUse.toISOString().split('T')[0],
+              }
+            });
+            console.log('📅 Set currentWorkout.date to:', workoutDateToUse.toISOString().split('T')[0]);
           }
-        });
-        console.log('📅 Set currentWorkout.date to:', workoutDateToUse.toISOString().split('T')[0]);
+        } catch (error) {
+          console.error('❌ Error setting currentWorkout.date:', error);
+        }
       }
       
-      // Set the workout title
-      setWorkoutTitle(global.sharedWorkoutName);
+      // Set the workout title - validate function exists
+      if (typeof setWorkoutTitle === 'function') {
+        setWorkoutTitle(global.sharedWorkoutName);
+      } else {
+        console.error('❌ setWorkoutTitle is not a function');
+        return false;
+      }
       
       // Handle different data structures
       let exercises;
@@ -91,6 +140,12 @@ export const useSharedWorkout = () => {
 
       console.log('🎯 Found', exercises.length, 'exercises to load');
       
+      // Validate addExercise function before loop
+      if (typeof addExercise !== 'function') {
+        console.error('❌ addExercise is not a function');
+        return false;
+      }
+      
       // Load exercises one by one with proper sequencing
       for (let i = 0; i < exercises.length; i++) {
         const exercise = exercises[i];
@@ -98,15 +153,25 @@ export const useSharedWorkout = () => {
         
         console.log(`🎯 Loading exercise ${i + 1}/${exercises.length}:`, exerciseName);
         
-        // Add the exercise
+        // Add the exercise - validate it's still a function
+        if (typeof addExercise !== 'function') {
+          console.error('❌ addExercise became invalid during loop');
+          break;
+        }
         addExercise(exerciseName);
         
         // Wait a bit for the state to update, then add sets
         await new Promise(resolve => setTimeout(resolve, 150));
         
         // Get the current workout state after adding the exercise
-        const currentState = useWorkoutStore.getState();
-        const currentExercises = currentState.currentWorkout.exercises || [];
+        let currentState;
+        try {
+          currentState = useWorkoutStore.getState();
+        } catch (error) {
+          console.error('❌ Error getting workout store state:', error);
+          continue; // Skip this exercise if we can't access the store
+        }
+        const currentExercises = currentState?.currentWorkout?.exercises || [];
         
         // Find the exercise we just added (the last one with matching name)
         const addedExercise = currentExercises
@@ -128,7 +193,18 @@ export const useSharedWorkout = () => {
           const setsToAdd = Math.max(0, sets.length - 1);
           console.log(`🎯 Adding ${setsToAdd} additional sets`);
           
+          // Validate addSet function before loop
+          if (typeof addSet !== 'function') {
+            console.error('❌ addSet is not a function');
+            break;
+          }
+          
           for (let setIndex = 0; setIndex < setsToAdd; setIndex++) {
+            // Validate function is still valid
+            if (typeof addSet !== 'function') {
+              console.error('❌ addSet became invalid during loop');
+              break;
+            }
             addSet(addedExercise.id);
             await new Promise(resolve => setTimeout(resolve, 100));
           }
@@ -137,8 +213,14 @@ export const useSharedWorkout = () => {
           await new Promise(resolve => setTimeout(resolve, 200));
           
           // Get updated state with all sets
-          const updatedState = useWorkoutStore.getState();
-          const updatedExercises = updatedState.currentWorkout.exercises || [];
+          let updatedState;
+          try {
+            updatedState = useWorkoutStore.getState();
+          } catch (error) {
+            console.error('❌ Error getting updated workout store state:', error);
+            continue; // Skip this exercise if we can't access the store
+          }
+          const updatedExercises = updatedState?.currentWorkout?.exercises || [];
           const updatedExercise = updatedExercises.find((ex: any) => ex.id === addedExercise.id);
           
           if (updatedExercise && updatedExercise.sets) {
@@ -157,16 +239,26 @@ export const useSharedWorkout = () => {
                   reps: setData.reps
                 });
                 
+                // Validate updateSet function before using
+                if (typeof updateSet !== 'function') {
+                  console.error('❌ updateSet is not a function');
+                  return; // Can't use break in forEach, use return to exit callback
+                }
+                
                 // Update weight if provided (check for 0 as valid value)
                 if (setData.weight !== null && setData.weight !== undefined) {
-                  updateSet(addedExercise.id, targetSet.id, 'weight', setData.weight);
-                  console.log(`✅ Set weight to ${setData.weight}`);
+                  if (typeof updateSet === 'function') {
+                    updateSet(addedExercise.id, targetSet.id, 'weight', setData.weight);
+                    console.log(`✅ Set weight to ${setData.weight}`);
+                  }
                 }
                 
                 // Update reps if provided (check for 0 as valid value)
                 if (setData.reps !== null && setData.reps !== undefined) {
-                  updateSet(addedExercise.id, targetSet.id, 'reps', setData.reps);
-                  console.log(`✅ Set reps to ${setData.reps}`);
+                  if (typeof updateSet === 'function') {
+                    updateSet(addedExercise.id, targetSet.id, 'reps', setData.reps);
+                    console.log(`✅ Set reps to ${setData.reps}`);
+                  }
                 }
                 
                 // Update notes if provided
@@ -216,7 +308,7 @@ export const useSharedWorkout = () => {
       );
       return false;
     }
-  }, [clearCurrentWorkout, setWorkoutTitle, addExercise, addSet, updateSet, setSelectedDate]);
+  }, []); // Empty deps - we'll validate functions are still valid inside the callback
 
   // Check for shared workout when component mounts
   useEffect(() => {

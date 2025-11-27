@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import {
   View,
   Text,
@@ -44,6 +44,7 @@ import { AnalysisModal } from '@/components/workout/modals/AnalysisModal';
 import { EditTodaysWorkoutModal } from '@/components/workout/modals/EditTodaysWorkoutModal';
 import { ShareModal } from '@/components/workout/modals/ShareModal';
 import { WeekPicker } from '@/components/workout/WeekPicker';
+import { LightningSeparator } from '@/components/shared/LightningSeparator';
 import { WorkoutTypeToggle } from '@/components/workout/WorkoutTypeToggle';
 import { WorkoutMetadata } from '@/components/workout/WorkoutMetadata';
 import { ExerciseSearch } from '@/components/workout/ExerciseSearch';
@@ -58,6 +59,11 @@ import { eventBus } from '@/lib/eventBus';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CustomExerciseModal } from '@/components/workout/modals/CustomExerciseModal';
 import type { CustomExercise, CustomExerciseInput, MachineLoadMetadata } from '@/stores/workoutStore';
+import { useWeightStore } from '@/stores/weightStore';
+import { WorkoutPlanGenerator } from '@/components/WorkoutPlanGenerator';
+import { AISuggestExerciseButton } from '@/components/workout/AISuggestExerciseButton';
+import { logErrorToFirebase } from '@/utils/errorLogger';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MACHINE_PLATE_WEIGHTS = [45, 35, 25, 10, 5, 2.5] as const;
 const DEFAULT_MACHINE_BASE_WEIGHT = 25;
@@ -82,14 +88,17 @@ type MachineSelectionState = {
 
 export default function WorkoutScreen() {
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
+  const insetsRaw = useSafeAreaInsets();
+  
+  // Ensure insets has valid values (defensive check)
+  const insets = insetsRaw || { top: 0, bottom: 0, left: 0, right: 0 };
   const scrollViewRef = useRef<ScrollView>(null);
   const searchSectionOffsetRef = useRef(0);
   const suppressPlateModalSetRef = useRef<string | null>(null);
   const baseWeightInputRef = useRef<TextInput | null>(null);
   const {
     currentWorkout,
-    selectedDate,
+    selectedDate: rawSelectedDate,
     workoutHistory,
     customExercises,
     setSelectedDate,
@@ -112,14 +121,35 @@ export default function WorkoutScreen() {
     loadCustomExercises,
     updateExerciseMachineLoad,
   } = useWorkoutStore();
+  
+  // Ensure selectedDate is always valid - normalize immediately
+  const selectedDate = (rawSelectedDate && rawSelectedDate instanceof Date && !isNaN(rawSelectedDate.getTime()))
+    ? rawSelectedDate
+    : new Date();
+  
+  // Fix selectedDate in store if it's invalid (run once on mount)
+  useEffect(() => {
+    if (!rawSelectedDate || !(rawSelectedDate instanceof Date) || isNaN(rawSelectedDate.getTime())) {
+      console.warn('⚠️ Invalid selectedDate detected in store, fixing...');
+      try {
+        setSelectedDate(new Date());
+      } catch (error) {
+        console.error('❌ Error fixing selectedDate:', error);
+      }
+    }
+  }, []); // Only run once on mount
 
   const { addPoints, canEarnToday, getDailyEarned } = usePointsStore();
   const { favorites, addFavorite, removeFavorite, updateFavorite, updateLastUsed, restoreFromLocalStorage } = useFavoritesStore();
   const { communities, activeCommunityId, createFeedEntry } = useCommunityStore();
   const { profile } = useUserStore();
+  const { loadWeightsFromFirebase } = useWeightStore();
   
   // Check if user is a coach - use profile check for consistency
   const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player';
+  const isPlayer = profile?.userType === 'institution' && profile?.institutionRole === 'player';
+  const isTrainerClient = profile?.appUseType === 'gym_trainer' && profile?.institutionRole === 'player';
+  const isClient = isPlayer || isTrainerClient;
   
   // Use shared workout hook
   useSharedWorkout();
@@ -153,6 +183,7 @@ export default function WorkoutScreen() {
   const [pendingSetFocus, setPendingSetFocus] = useState<SetFocusRequest | null>(null);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [showCustomExerciseModal, setShowCustomExerciseModal] = useState(false);
+  const [showWorkoutPlanGenerator, setShowWorkoutPlanGenerator] = useState(false);
   
   // Equipment selection modal state
   const [showEquipmentModal, setShowEquipmentModal] = useState(false);
@@ -279,7 +310,15 @@ export default function WorkoutScreen() {
     [addCustomExercise, handleCustomExerciseSelect]
   );
 
-  const getLocalDateKey = (value: Date) => {
+  const getLocalDateKey = (value: Date | null | undefined): string => {
+    if (!value || !(value instanceof Date) || isNaN(value.getTime())) {
+      // Return today's date key as fallback
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
     const year = value.getFullYear();
     const month = String(value.getMonth() + 1).padStart(2, '0');
     const day = String(value.getDate()).padStart(2, '0');
@@ -877,60 +916,150 @@ export default function WorkoutScreen() {
   // Auto-depopulate workout when new day starts
   useEffect(() => {
     const checkDayChange = async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const selectedDateCopy = new Date(selectedDate);
-      selectedDateCopy.setHours(0, 0, 0, 0);
-      
-      // If viewing today's workout and it's a new day, clear current workout
-      if (selectedDateCopy.getTime() === today.getTime() && currentWorkout.exercises && currentWorkout.exercises.length > 0) {
-        try {
-          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-          const lastDateKey = 'lastWorkoutDate';
-          const lastDateStr = await AsyncStorage.getItem(lastDateKey);
-          const lastDate = lastDateStr ? new Date(lastDateStr) : null;
-          
-          if (lastDate) {
-            lastDate.setHours(0, 0, 0, 0);
-            // If last date is different from today, it's a new day - clear workout
-            if (lastDate.getTime() !== today.getTime()) {
-              console.log('📅 New day detected - clearing current workout');
-              clearCurrentWorkout();
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const selectedDateCopy = new Date(selectedDate);
+        selectedDateCopy.setHours(0, 0, 0, 0);
+        
+        // If viewing today's workout and it's a new day, clear current workout
+        if (selectedDateCopy.getTime() === today.getTime() && currentWorkout.exercises && currentWorkout.exercises.length > 0) {
+          try {
+            // Validate AsyncStorage is available before using
+            if (!AsyncStorage || typeof AsyncStorage.getItem !== 'function') {
+              console.error('❌ AsyncStorage not available');
+              return;
             }
+            
+            const lastDateKey = 'lastWorkoutDate';
+            let lastDateStr: string | null = null;
+            
+            try {
+              lastDateStr = await AsyncStorage.getItem(lastDateKey);
+            } catch (getError) {
+              console.error('❌ Error reading AsyncStorage:', getError);
+              // Log to Firebase
+              logErrorToFirebase(getError instanceof Error ? getError : new Error(String(getError)), {
+                component: 'WorkoutScreen.AsyncStorage.getItem',
+                userId: user?.uid,
+              }).catch(() => {});
+              // Continue without date check if read fails - don't crash
+              return;
+            }
+            
+            if (lastDateStr) {
+              try {
+                const lastDate = new Date(lastDateStr);
+                if (!isNaN(lastDate.getTime())) {
+                  lastDate.setHours(0, 0, 0, 0);
+                  // If last date is different from today, it's a new day - clear workout
+                  if (lastDate.getTime() !== today.getTime()) {
+                    if (typeof clearCurrentWorkout === 'function') {
+                      clearCurrentWorkout();
+                    }
+                  }
+                }
+              } catch (dateError) {
+                console.error('❌ Error parsing date from AsyncStorage:', dateError);
+                // Continue - invalid date is not critical
+              }
+            }
+            
+            // Update last tracked date - wrap in try-catch with error logging
+            try {
+              if (AsyncStorage && typeof AsyncStorage.setItem === 'function') {
+                await AsyncStorage.setItem(lastDateKey, today.toISOString());
+              }
+            } catch (setError) {
+              console.error('❌ Error writing to AsyncStorage:', setError);
+              // Log to Firebase but don't crash
+              logErrorToFirebase(setError instanceof Error ? setError : new Error(String(setError)), {
+                component: 'WorkoutScreen.AsyncStorage.setItem',
+                userId: user?.uid,
+              }).catch(() => {});
+              // Don't crash if write fails
+            }
+          } catch (error) {
+            console.error('❌ Error in checkDayChange AsyncStorage block:', error);
+            // Log to Firebase but don't crash
+            logErrorToFirebase(error instanceof Error ? error : new Error(String(error)), {
+              component: 'WorkoutScreen.checkDayChange',
+              userId: user?.uid,
+            }).catch(() => {});
           }
-          
-          // Update last tracked date
-          await AsyncStorage.setItem(lastDateKey, today.toISOString());
-        } catch (error) {
-          console.error('Error checking day change:', error);
         }
+      } catch (error) {
+        console.error('❌ Error in checkDayChange:', error);
+        // Log but don't crash
+        logErrorToFirebase(error instanceof Error ? error : new Error(String(error)), {
+          component: 'WorkoutScreen.checkDayChange',
+          userId: user?.uid,
+        }).catch(() => {});
       }
     };
     
-    checkDayChange();
+    // Wrap initial call in try-catch
+    try {
+      checkDayChange().catch((error) => {
+        console.error('❌ Unhandled error in checkDayChange:', error);
+      });
+    } catch (error) {
+      console.error('❌ Error calling checkDayChange:', error);
+    }
     
-    // Check every minute to catch day changes
-    const interval = setInterval(checkDayChange, 60000);
+    // Check every minute to catch day changes - wrap interval callback
+    const interval = setInterval(() => {
+      try {
+        checkDayChange().catch((error) => {
+          console.error('❌ Unhandled error in checkDayChange interval:', error);
+        });
+      } catch (error) {
+        console.error('❌ Error in checkDayChange interval:', error);
+      }
+    }, 60000);
     
-    return () => clearInterval(interval);
+    return () => {
+      try {
+        clearInterval(interval);
+      } catch (error) {
+        console.error('❌ Error clearing interval:', error);
+      }
+    };
   }, [selectedDate, clearCurrentWorkout, currentWorkout.exercises?.length]);
 
   useEffect(() => {
     if (user && user.uid) {
-      console.log('🔄 Loading workouts for user:', user.uid);
-      loadWorkoutsFromFirebase(user.uid).catch((error) => {
-        console.error('❌ Error loading workouts in workout screen:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-        console.error('❌ Error message:', errorMessage);
-        console.error('❌ Error stack:', errorStack);
-        // Don't crash the app - just log the error
+      // Wrap in try-catch to prevent crashes
+      try {
+        loadWorkoutsFromFirebase(user.uid).catch((error) => {
+          console.error('❌ Error loading workouts in workout screen:', error);
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+          console.error('❌ Error message:', errorMessage);
+          console.error('❌ Error stack:', errorStack);
+          // Log to Firebase for debugging
+          logErrorToFirebase(error instanceof Error ? error : new Error(String(error)), {
+            component: 'WorkoutScreen.loadWorkoutsFromFirebase',
+            userId: user.uid,
+          }).catch((logErr) => {
+            console.error('❌ Failed to log error to Firebase:', logErr);
+          });
+          // Don't crash the app - just log the error
+        });
+      } catch (error) {
+        console.error('❌ Fatal error loading workouts:', error);
+        // Don't crash - continue with empty workout history
+      }
+      
+      // Load weights from Firebase
+      loadWeightsFromFirebase(user.uid).catch((error) => {
+        console.error('❌ Error loading weights:', error);
       });
     }
     
     // Restore favorites data
     restoreFromLocalStorage();
-  }, [user, loadWorkoutsFromFirebase, restoreFromLocalStorage]);
+  }, [user, loadWorkoutsFromFirebase, restoreFromLocalStorage, loadWeightsFromFirebase]);
 
   // Track if we're currently deleting to prevent reload
   const [isDeletingWorkout, setIsDeletingWorkout] = useState(false);
@@ -942,9 +1071,44 @@ export default function WorkoutScreen() {
       return;
     }
 
+    // Safety check: ensure selectedDate is valid before proceeding
+    if (!selectedDate || !(selectedDate instanceof Date) || isNaN(selectedDate.getTime())) {
+      console.error('❌ Invalid selectedDate in workout screen useEffect:', selectedDate);
+      // Set to today's date as fallback
+      if (setSelectedDate) {
+        setSelectedDate(new Date());
+      }
+      return;
+    }
+
     const loadWorkoutForDate = async () => {
-      // First check workout history
-      let workout = getWorkoutForDate(selectedDate);
+      try {
+        // Validate selectedDate again inside the function
+        if (!selectedDate || !(selectedDate instanceof Date) || isNaN(selectedDate.getTime())) {
+          console.error('❌ Invalid selectedDate in loadWorkoutForDate:', selectedDate);
+          setTodaysWorkout(null);
+          setIsViewingExistingWorkout(false);
+          setIsEditingCompletedWorkout(false);
+          return;
+        }
+        
+        // Validate getWorkoutForDate is a function before calling
+        if (!getWorkoutForDate || typeof getWorkoutForDate !== 'function') {
+          console.error('❌ getWorkoutForDate is not a function');
+          setTodaysWorkout(null);
+          setIsViewingExistingWorkout(false);
+          setIsEditingCompletedWorkout(false);
+          return;
+        }
+        
+        // First check workout history
+        let workout = null;
+        try {
+          workout = getWorkoutForDate(selectedDate);
+        } catch (error) {
+          console.error('❌ Error calling getWorkoutForDate:', error);
+          workout = null;
+        }
 
       const currentKey =
         currentWorkout?.date && currentWorkout.exercises?.length
@@ -977,7 +1141,6 @@ export default function WorkoutScreen() {
       if (isCoach && user?.uid && profile?.teamId) {
         try {
           const dateString = getLocalDateKey(selectedDate);
-          console.log('🔍 Checking for assigned workouts by coach on date:', dateString);
           const coachAssignments = await workoutSharingService.getCoachAssignments(user.uid, profile.teamId);
           
           // Check if any assignments exist for the selected date
@@ -1028,7 +1191,6 @@ export default function WorkoutScreen() {
           });
           
           setHasAssignedWorkoutsForDate(assignmentsForDate.length > 0);
-          console.log('📊 Found', assignmentsForDate.length, 'assigned workouts for date:', dateString);
           
           // If there's an assigned workout and no workout in history, show the first assigned workout
           if (assignmentsForDate.length > 0 && !workout) {
@@ -1059,7 +1221,6 @@ export default function WorkoutScreen() {
                 // Use local date key to avoid timezone issues
                 workoutDateString = getLocalDateKey(assignedDateObj);
                 createdAtDate = assignedDateObj;
-                console.log('📅 Using assignedDate for coach view workout:', workoutDateString);
               } catch (error) {
                 console.error('❌ Error parsing assignedDate:', error);
                 createdAtDate = new Date();
@@ -1104,8 +1265,6 @@ export default function WorkoutScreen() {
               // @ts-ignore - Extended properties for assigned workouts
               assignmentId: firstAssignment.id, // Store the assignment ID for deletion
             };
-            console.log('✅ Loaded assigned workout for coach to view:', workout);
-            console.log('📅 Workout date set to:', workoutDateString, '(from assignedDate)');
             
             // Update selectedDate to match the assigned date so it appears on the correct day
             if (workoutDateString !== dateString && firstAssignment.assignedDate) {
@@ -1124,7 +1283,6 @@ export default function WorkoutScreen() {
                 // Set selected date to match assigned date if we successfully parsed it
                 if (assignedDateObj && !isNaN(assignedDateObj.getTime())) {
                   setSelectedDate(assignedDateObj);
-                  console.log('📅 Updated selectedDate to match assignedDate:', workoutDateString);
                 }
               } catch (error) {
                 console.error('❌ Error updating selectedDate:', error);
@@ -1142,7 +1300,6 @@ export default function WorkoutScreen() {
       // If no workout in history, check assigned workouts from inbox (for players)
       if (!workout && user?.uid && !isCoach) {
         try {
-          console.log('📬 Checking inbox for assigned workout on date:', getLocalDateKey(selectedDate));
           const inboxWorkouts = await workoutSharingService.getPlayerInbox(user.uid);
           const dateString = getLocalDateKey(selectedDate);
           
@@ -1194,7 +1351,6 @@ export default function WorkoutScreen() {
           });
           
           if (assignedWorkout) {
-            console.log('✅ Found assigned workout for date:', assignedWorkout);
             // Convert assigned workout to Workout format
             const workoutData = assignedWorkout.workoutData || assignedWorkout;
             
@@ -1223,7 +1379,6 @@ export default function WorkoutScreen() {
                 // Use local date key to avoid timezone issues
                 workoutDateString = getLocalDateKey(assignedDateObj);
                 createdAtDate = assignedDateObj;
-                console.log('📅 Using assignedDate for workout:', workoutDateString);
               } catch (error) {
                 console.error('❌ Error parsing assignedDate:', error);
                 createdAtDate = new Date();
@@ -1268,8 +1423,6 @@ export default function WorkoutScreen() {
               // @ts-ignore - Extended properties for assigned workouts
               assignmentId: assignedWorkout.id, // Store the assignment ID for deletion
             };
-            console.log('✅ Converted assigned workout:', workout);
-            console.log('📅 Workout date set to:', workoutDateString, '(from assignedDate)');
             
             // Update selectedDate to match the assigned date so it appears on the correct day
             if (workoutDateString !== dateString && assignedWorkout.assignedDate) {
@@ -1288,7 +1441,6 @@ export default function WorkoutScreen() {
                 // Set selected date to match assigned date if we successfully parsed it
                 if (assignedDateObj && !isNaN(assignedDateObj.getTime())) {
                   setSelectedDate(assignedDateObj);
-                  console.log('📅 Updated selectedDate to match assignedDate:', workoutDateString);
                 }
               } catch (error) {
                 console.error('❌ Error updating selectedDate:', error);
@@ -1300,14 +1452,12 @@ export default function WorkoutScreen() {
         }
       }
       
-      console.log('📅 Workout for selected date:', workout ? 'Found' : 'None', 'Date:', selectedDate.toDateString());
       
       let workoutForCard: any = workout;
       let viewingExisting = false;
 
       if (workout && workout.exercises && workout.exercises.length > 0) {
         if (!isCoach && (workout as any).status === 'saved' && !(workout as any).isAssignedWorkout) {
-          console.log('💾 Hydrating saved draft workout from history');
           hydrateDraftWorkout(workout as any);
           workoutForCard = workout;
           viewingExisting = false;
@@ -1322,7 +1472,6 @@ export default function WorkoutScreen() {
           if (isAssignedWorkout && !isCoach) {
             // Player viewing assigned workout - make it editable
             // Hydrate the workout into currentWorkout state so player can edit it
-            console.log('✏️ Player can edit assigned workout - hydrating into currentWorkout');
             hydrateDraftWorkout(workout as any);
             
             // After hydrating, get the currentWorkout state to use for display
@@ -1336,7 +1485,6 @@ export default function WorkoutScreen() {
             } as any;
             
             viewingExisting = false;
-            console.log('✏️ Assigned workout hydrated, player can now edit - using currentWorkout');
           } else {
             // Coach viewing assigned workout OR completed workout - make it view-only
             viewingExisting = Boolean(
@@ -1345,7 +1493,6 @@ export default function WorkoutScreen() {
               (isAssignedWorkout && isCoach) // Redundant but explicit
             );
             if (viewingExisting) {
-              console.log('👁️ Viewing existing workout for selected date');
             }
           }
         }
@@ -1356,7 +1503,11 @@ export default function WorkoutScreen() {
             id: currentWorkout.id || generateUniqueId('draft'),
             title:
               currentWorkout.title ||
-              `Workout – ${selectedDate.toLocaleDateString('en-US', {
+              `Workout – ${selectedDate && selectedDate instanceof Date && !isNaN(selectedDate.getTime()) ? selectedDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              }) : new Date().toLocaleDateString('en-US', {
                 weekday: 'long',
                 month: 'long',
                 day: 'numeric',
@@ -1369,7 +1520,6 @@ export default function WorkoutScreen() {
           });
           viewingExisting = workoutStatus === 'completed';
         } else {
-          console.log('🧹 No workout with exercises found for selected date, clearing current workout');
           clearCurrentWorkout();
           workoutForCard = null;
           viewingExisting = false;
@@ -1379,9 +1529,42 @@ export default function WorkoutScreen() {
       setTodaysWorkout(workoutForCard);
       setIsViewingExistingWorkout(viewingExisting);
       setIsEditingCompletedWorkout(false);
+      } catch (error) {
+        console.error('❌ Error in loadWorkoutForDate:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+        console.error('❌ Error message:', errorMessage);
+        console.error('❌ Error stack:', errorStack);
+        // Set safe defaults to prevent crash
+        try {
+          setTodaysWorkout(null);
+          setIsViewingExistingWorkout(false);
+          setIsEditingCompletedWorkout(false);
+        } catch (setStateError) {
+          console.error('❌ Error setting state in error handler:', setStateError);
+        }
+        
+        // Log error to Firebase for debugging
+        logErrorToFirebase(error as Error, {
+          component: 'WorkoutScreen.loadWorkoutForDate',
+          userId: user?.uid,
+          metadata: {
+            selectedDate: selectedDate?.toISOString(),
+            hasSelectedDate: !!selectedDate,
+          },
+        }).catch((logErr) => {
+          console.error('❌ Failed to log error to Firebase:', logErr);
+        });
+      }
     };
     
-    loadWorkoutForDate();
+    // Safely call loadWorkoutForDate with error handling
+    try {
+      loadWorkoutForDate();
+    } catch (error) {
+      console.error('❌ Fatal error calling loadWorkoutForDate:', error);
+      // Continue - the error is already logged
+    }
   }, [getWorkoutForDate, selectedDate, clearCurrentWorkout, workoutHistory, user?.uid, isCoach, profile?.teamId, isDeletingWorkout]);
 
   const handleSaveExerciseCard = useCallback((exerciseId: string) => {
@@ -1457,36 +1640,11 @@ export default function WorkoutScreen() {
     }
     
     const completedWorkout = finishWorkout();
-    console.log('🏋️ Completed workout from finishWorkout():', completedWorkout);
-    console.log('🏋️ Completed workout exercises:', completedWorkout?.exercises);
-    console.log('🏋️ Completed workout exercises length:', completedWorkout?.exercises?.length);
 
     if (completedWorkout) {
       setTodaysWorkout(completedWorkout);
       setIsViewingExistingWorkout(true);
       setIsEditingCompletedWorkout(false);
-    }
-    
-    // Debug specific exercise data
-    if (completedWorkout?.exercises) {
-      completedWorkout.exercises.forEach((exercise, index) => {
-        console.log(`🏋️ Exercise ${index + 1}:`, {
-          name: exercise.name,
-          equipment: (exercise as any).equipment,
-          sets: exercise.sets,
-          setsLength: exercise.sets?.length
-        });
-        
-        if (exercise.sets) {
-          exercise.sets.forEach((set, setIndex) => {
-            console.log(`🏋️ Exercise ${index + 1} Set ${setIndex + 1}:`, {
-              weight: set.weight,
-              reps: set.reps,
-              completed: (set as any).completed
-            });
-          });
-        }
-      });
     }
     
     if (completedWorkout && user?.uid && !isCoach) {
@@ -1501,12 +1659,7 @@ export default function WorkoutScreen() {
       const completionLabel = workoutType === 'cardio' ? 'Cardio' : 'Workout';
       let pointsAwarded = false;
       
-      if (existingPointEvent) {
-        console.log('⚠️ Points already awarded for this workout. Skipping duplicate award.', {
-          workoutId: completedWorkout.id,
-          pointType,
-        });
-      } else {
+      if (!existingPointEvent) {
         // Add points with workout ID as reference for potential deletion
         try {
           await addPoints(
@@ -1519,78 +1672,58 @@ export default function WorkoutScreen() {
             user.uid
           );
           pointsAwarded = true;
-          console.log('✅ Points added for workout completion');
         } catch (error) {
           console.error('❌ Error adding points for workout:', error);
         }
       }
       
-      console.log('🏋️ Workout completed! Showing alert with share option...');
-      
       // Check if this was an assigned workout that needs to be marked as completed
       // Use state variable first, then fallback to global (for backwards compatibility)
       const sharedWorkoutId = currentSharedWorkoutId || global.sharedWorkoutId;
-      console.log('🔍 Checking for assigned workout completion:', {
-        currentSharedWorkoutId,
-        globalSharedWorkoutId: global.sharedWorkoutId,
-        finalId: sharedWorkoutId
-      });
       
       if (sharedWorkoutId && user?.uid) {
-        console.log('✅ This is an assigned workout, marking as completed...');
-        console.log('✅ Shared workout ID:', sharedWorkoutId);
-        console.log('✅ Player ID:', user.uid);
-        
         workoutSharingService.markWorkoutCompleted(sharedWorkoutId, user.uid)
           .then((success) => {
             if (success) {
-              console.log('✅ Assigned workout marked as completed in Firebase');
               // Clear both the state and global shared workout ID since it's been marked complete
               setCurrentSharedWorkoutId(null);
               global.sharedWorkoutId = null as any;
             } else {
-              console.warn('⚠️ Failed to mark assigned workout as completed');
             }
           })
           .catch((error) => {
             console.error('❌ Error marking assigned workout as completed:', error);
           });
-      } else {
-        console.log('ℹ️ Not an assigned workout, or missing IDs:', {
-          hasSharedWorkoutId: !!sharedWorkoutId,
-          hasUserId: !!user?.uid
+      }
+      
+      // Only show share button for coaches/trainers, not for clients/players
+      const alertButtons = [];
+      if (!isClient && isCoach) {
+        alertButtons.push({ 
+          text: '📤 Assign to Players', 
+          onPress: () => {
+            setCompletedWorkoutToShare(completedWorkout);
+            setAssignedDateForShare(new Date());
+            setShowDatePickerForShare(true);
+          }
         });
       }
+      alertButtons.push({ 
+        text: 'OK', 
+        onPress: () => {
+          clearCurrentWorkout();
+          // Also clear the shared workout ID when clearing workout
+          setCurrentSharedWorkoutId(null);
+          global.sharedWorkoutId = null as any;
+        }
+      });
+      
       Alert.alert(
         'Workout Complete!',
         pointsAwarded
           ? `${completionLabel} logged and saved! +${pointAmount} V.`
           : `${completionLabel} logged and saved!`,
-        [
-        { 
-          text: '📤 Share with Community', 
-          onPress: () => {
-            console.log('📤 Share with Community button pressed!');
-            console.log('📤 Setting completedWorkoutToShare:', completedWorkout);
-            console.log('📤 CompletedWorkout exercises:', completedWorkout?.exercises);
-            console.log('📤 CompletedWorkout exercises length:', completedWorkout?.exercises?.length);
-            setCompletedWorkoutToShare(completedWorkout);
-            // For coaches, show date picker first; for players, show share modal directly
-            if (isCoach) {
-              setAssignedDateForShare(new Date());
-              setShowDatePickerForShare(true);
-            } else {
-              setShowShareModal(true);
-            }
-          }
-        },
-        { text: 'OK', onPress: () => {
-          clearCurrentWorkout();
-          // Also clear the shared workout ID when clearing workout
-          setCurrentSharedWorkoutId(null);
-          global.sharedWorkoutId = null as any;
-        }}
-      ]
+        alertButtons
       );
     }
   };
@@ -1631,7 +1764,6 @@ export default function WorkoutScreen() {
 
   // Test function to verify workout sharing
   const testWorkoutSharing = async () => {
-    console.log('🧪 Testing workout sharing...');
     
     // Create a simple test workout
     const testWorkout = {
@@ -1658,7 +1790,6 @@ export default function WorkoutScreen() {
       ]
     };
     
-    console.log('🧪 Test workout created:', testWorkout);
     
     // Test sharing with a dummy community and players
     const testCommunity = {
@@ -1681,7 +1812,6 @@ export default function WorkoutScreen() {
         'medium'
       );
       
-      console.log('🧪 Test sharing result:', success);
     } catch (error) {
       console.error('🧪 Test sharing error:', error);
     }
@@ -1689,17 +1819,6 @@ export default function WorkoutScreen() {
 
   const handleShareWorkoutWithTeam = async (workout: any, community: any, players: string[], assignedDate?: Date) => {
     try {
-      console.log('📤 Sharing workout with team:', { workout, community, players });
-      console.log('📤 Workout object details:', {
-        id: workout?.id,
-        title: workout?.title,
-        name: workout?.name,
-        exercises: workout?.exercises,
-        exercisesLength: workout?.exercises?.length,
-        workoutKeys: Object.keys(workout || {}),
-        workoutType: typeof workout
-      });
-      
       if (!user?.uid || !profile) {
         Alert.alert('Error', 'User information not available. Please try again.');
         return;
@@ -1934,8 +2053,11 @@ export default function WorkoutScreen() {
   };
 
   const handleShareWithCommunity = async () => {
-    console.log('🔍 handleShareWithCommunity called');
-    console.log('🔍 Current communities:', communities);
+    // Check feature flag - show "Coming Soon" if share is disabled
+    const { checkFeatureOrShowComingSoon } = require('@/utils/features/featureFlags');
+    if (!checkFeatureOrShowComingSoon('shareWorkout', 'Share Workout')) {
+      return;
+    }
 
     if (!isFeatureUnlocked('community_challenges')) {
       setShowUnlockModal(true);
@@ -1968,9 +2090,6 @@ export default function WorkoutScreen() {
     }
 
     const fetchTeamData = async () => {
-      console.log('🔍 Share modal opened - checking profile:', profile);
-      console.log('🔍 Profile teamId:', profile?.teamId);
-      console.log('🔍 Communities:', communities);
 
       if (!user?.uid) {
         return;
@@ -1980,10 +2099,8 @@ export default function WorkoutScreen() {
         const { fetchUserDoc } = useUserStore.getState();
         await fetchUserDoc(user.uid);
         const updatedProfile = useUserStore.getState().profile;
-        console.log('🔄 Updated profile:', updatedProfile);
 
         if (updatedProfile?.teamId) {
-          console.log('🔍 Fetching team data by ID:', updatedProfile.teamId);
           const team = await teamService.getTeamById(updatedProfile.teamId);
           if (team) {
             setFirebaseTeamData(team);
@@ -2065,6 +2182,8 @@ export default function WorkoutScreen() {
               onDateSelect={setSelectedDate}
               onWeekOffsetChange={setWeekOffset}
             />
+            
+            <LightningSeparator />
 
             {/* Only show post-workout card if workout is completed (for personal use) or if it's an assigned workout (for coaches) */}
             {isViewingExistingWorkout && todaysWorkout && 
@@ -2094,17 +2213,17 @@ export default function WorkoutScreen() {
                       }
                     : undefined
                 }
-                onShare={() => {
-                  // For coaches: assign workout directly with selected date
-                  // For players: share with community
+                onShare={isClient ? undefined : () => {
+                  // Check feature flag - show "Coming Soon" if share is disabled
+                  const { checkFeatureOrShowComingSoon } = require('@/utils/features/featureFlags');
+                  if (!checkFeatureOrShowComingSoon('shareWorkout', 'Share Workout')) {
+                    return;
+                  }
+                  
+                  // Only coaches/trainers can assign/share workouts
                   if (isCoach) {
-                    console.log('📤 Coach assigning workout from Today\'s Workout');
                     setCompletedWorkoutToShare(todaysWorkout);
                     setAssignedDateForShare(selectedDate);
-                    setShowShareModal(true);
-                  } else {
-                    console.log('📤 Player sharing workout with community');
-                    setCompletedWorkoutToShare(todaysWorkout);
                     setShowShareModal(true);
                   }
                 }}
@@ -2141,12 +2260,9 @@ export default function WorkoutScreen() {
                             // The workout.id is what was used as referenceId when points were added
                             const workoutIdForPoints = workoutToDelete.id;
                             
-                            console.log('🗑️ Delete workout - ID for deletion:', workoutIdToDelete);
-                            console.log('🗑️ Delete workout - ID for points deduction:', workoutIdForPoints);
                             
                             if (isAssignedWorkout) {
                               // Delete assigned workout from inbox/sharedWorkouts
-                              console.log('🗑️ Deleting assigned workout:', workoutIdToDelete);
                               
                               // For players: remove from their inbox
                               if (!isCoach && user?.uid) {
@@ -2156,7 +2272,6 @@ export default function WorkoutScreen() {
                                   try {
                                     const { usePointsStore } = await import('@/stores/pointsStore');
                                     await usePointsStore.getState().deductPoints(workoutIdForPoints, user.uid);
-                                    console.log('✅ Points deducted for deleted assigned workout, ID:', workoutIdForPoints);
                                   } catch (pointsError) {
                                     console.error('❌ Error deducting points for assigned workout:', pointsError);
                                   }
@@ -2179,27 +2294,22 @@ export default function WorkoutScreen() {
                                   await updateDoc(inboxDoc.ref, {
                                     sharedWorkouts: updatedWorkouts
                                   });
-                                  console.log('✅ Removed workout from player inbox');
                                 }
                               }
                               
                               // For coaches: delete the assigned workout entirely
                               if (isCoach) {
                                 await workoutSharingService.deleteAssignedWorkout(workoutIdToDelete);
-                                console.log('✅ Deleted assigned workout as coach');
                               }
                             } else {
                               // Delete completed workout from history
-                              console.log('🗑️ Deleting completed workout:', workoutIdToDelete);
                               
                               // Deduct points BEFORE deleting using the workout.id (not Firebase document ID)
                               // The workout.id is what was stored as referenceId when points were added
                               if (user?.uid && !isCoach && workoutIdForPoints) {
                                 try {
-                                  console.log('💰 Deducting points for workout ID:', workoutIdForPoints);
                                   const { usePointsStore } = await import('@/stores/pointsStore');
                                   await usePointsStore.getState().deductPoints(workoutIdForPoints, user.uid);
-                                  console.log('✅ Points deducted successfully for workout ID:', workoutIdForPoints);
                                 } catch (pointsError) {
                                   console.error('❌ Error deducting points for workout:', pointsError);
                                   console.error('❌ Workout ID used:', workoutIdForPoints);
@@ -2272,6 +2382,7 @@ export default function WorkoutScreen() {
 
             {/* Action row stays directly beneath the builder */}
               {/* For coaches: Always show creation interface. For players: only show when not viewing existing workout */}
+              <View style={{ marginTop: -4 }}>
               {(!isViewingExistingWorkout || isCoach || todaysWorkout?.status === 'saved') && (
                 <>
                   {/* Show separator for coaches when viewing assigned workout */}
@@ -2318,24 +2429,36 @@ export default function WorkoutScreen() {
                   
                   {currentWorkout.exercises && Array.isArray(currentWorkout.exercises) ? 
                     currentWorkout.exercises.map((exercise, index) => (
-                      <ExerciseCard
-                        key={`exercise-${exercise.id}-${index}`}
-                        exercise={exercise}
-                        validationErrors={validationErrors}
-                        onUpdateSet={updateSet}
-                        onRemoveExercise={removeExercise}
-                        onRemoveSet={removeSet}
-                        onSetCountChange={handleSetCountChange}
-                        onSetStatus={setExerciseStatus}
-                        onSaveExercise={handleSaveExerciseCard}
-                        focusRequest={pendingSetFocus}
-                        onFocusHandled={() => setPendingSetFocus(null)}
-                      onInputFocus={handleSetInputFocus}
-                      onWeightFocus={handleWeightInputFocus}
-                      />
+                      <Fragment key={`exercise-${exercise.id || 'ex-' + index}-${index}-${currentWorkout.id || 'current'}`}>
+                        <ExerciseCard
+                          exercise={exercise}
+                          validationErrors={validationErrors}
+                          onUpdateSet={updateSet}
+                          onRemoveExercise={removeExercise}
+                          onRemoveSet={removeSet}
+                          onSetCountChange={handleSetCountChange}
+                          onSetStatus={setExerciseStatus}
+                          onSaveExercise={handleSaveExerciseCard}
+                          focusRequest={pendingSetFocus}
+                          onFocusHandled={() => setPendingSetFocus(null)}
+                          onInputFocus={handleSetInputFocus}
+                          onWeightFocus={handleWeightInputFocus}
+                        />
+                        {/* AI Suggest Next Exercise Button */}
+                        {exercise.type !== 'cardio' && (
+                          <AISuggestExerciseButton
+                            currentExercises={currentWorkout.exercises || []}
+                            workoutType={workoutType}
+                            onExerciseSuggested={(exerciseName) => {
+                              handleExerciseSelection(exerciseName);
+                            }}
+                          />
+                        )}
+                      </Fragment>
                     )) : null}
                 </>
               )}
+              </View>
             </>
           ) : (
             <FavoritesList
@@ -2387,78 +2510,78 @@ export default function WorkoutScreen() {
                   </TouchableOpacity>
                 )}
                 
-                <TouchableOpacity
-                  style={[
-                    styles.assignButton,
-                    { 
-                      backgroundColor: (currentWorkout.exercises && currentWorkout.exercises.length > 0) 
-                        ? BrandColors.accent 
-                        : BrandColors.gray700,
-                      opacity: (currentWorkout.exercises && currentWorkout.exercises.length > 0) ? 1 : 0.6
-                    }
-                  ]}
-                  onPress={async () => {
-                    if (!currentWorkout.exercises || currentWorkout.exercises.length === 0) {
-                      Alert.alert('No Workout', 'Please add some exercises before assigning to players.');
-                      return;
-                    }
-                    
-                    // Ensure communities are loaded before opening modal
-                    const { loadCommunityData } = useCommunityStore.getState();
-                    if (loadCommunityData) {
-                      await loadCommunityData();
-                    }
-                    
-                    // Set the workout to share with the selected date
-                    const workoutToShare = {
-                      ...currentWorkout,
-                      exercises: currentWorkout.exercises,
-                      date: selectedDate.toISOString().split('T')[0],
-                      title: currentWorkout.title || `Workout - ${selectedDate.toLocaleDateString()}`
-                    };
-                    console.log('📤 Coach clicking Assign to Players, setting workout:', workoutToShare);
-                    console.log('📤 Communities before opening modal:', useCommunityStore.getState().communities);
-                    setCompletedWorkoutToShare(workoutToShare);
-                    setAssignedDateForShare(selectedDate);
-                    console.log('📤 Opening ShareModal, showShareModal set to true');
-                    setShowShareModal(true);
-                  }}
-                >
-                  <Text style={[styles.assignButtonText, { color: BrandColors.text }]}>
-                    Assign to Players
-                  </Text>
-                </TouchableOpacity>
+                {/* Only show "Assign to Players" button when exercises have been recorded */}
+                {currentWorkout.exercises && currentWorkout.exercises.length > 0 && (
+                  <TouchableOpacity
+                    style={[
+                      styles.assignButton,
+                      { 
+                        backgroundColor: BrandColors.accent,
+                        opacity: 1
+                      }
+                    ]}
+                    onPress={async () => {
+                      if (!currentWorkout.exercises || currentWorkout.exercises.length === 0) {
+                        Alert.alert('No Workout', 'Please add some exercises before assigning to players.');
+                        return;
+                      }
+                      
+                      // Ensure communities are loaded before opening modal
+                      const { loadCommunityData } = useCommunityStore.getState();
+                      if (loadCommunityData) {
+                        await loadCommunityData();
+                      }
+                      
+                      // Set the workout to share with the selected date
+                      const workoutToShare = {
+                        ...currentWorkout,
+                        exercises: currentWorkout.exercises,
+                        date: selectedDate.toISOString().split('T')[0],
+                        title: currentWorkout.title || `Workout - ${selectedDate.toLocaleDateString()}`
+                      };
+                      setCompletedWorkoutToShare(workoutToShare);
+                      setAssignedDateForShare(selectedDate);
+                      setShowShareModal(true);
+                    }}
+                  >
+                    <Text style={[styles.assignButtonText, { color: BrandColors.text }]}>
+                      Assign to Players
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </>
             ) : (
               <>
                 {/* For players: Keep the original share and finish buttons */}
-                <TouchableOpacity
-                  style={[
-                    styles.shareButton,
-                    { 
-                      backgroundColor: isFeatureUnlocked('community_challenges') ? BrandColors.accent : BrandColors.gray700,
-                      opacity: isFeatureUnlocked('community_challenges') ? 1 : 0.6
-                    }
-                  ]}
-                  onPress={handleShareWithCommunity}
-                >
-                  <Text style={[
-                    styles.shareButtonText,
-                    { color: isFeatureUnlocked('community_challenges') ? BrandColors.text : BrandColors.textSecondary }
-                  ]}>
-                    Share with Community
-                  </Text>
-                </TouchableOpacity>
-                
                 {!isViewingExistingWorkout && !isEditingCompletedWorkout && (
-                  <TouchableOpacity
-                    style={[styles.finishButton, { backgroundColor: BrandColors.accent }]}
-                    onPress={handleFinishWorkout}
-                  >
-                    <Text style={[styles.finishButtonText, { color: BrandColors.text }] }>
-                      Finish Workout
-                    </Text>
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity
+                      style={[
+                        styles.shareButton,
+                        { 
+                          backgroundColor: isFeatureUnlocked('community_challenges') ? BrandColors.accent : BrandColors.gray700,
+                          opacity: isFeatureUnlocked('community_challenges') ? 1 : 0.6
+                        }
+                      ]}
+                      onPress={handleShareWithCommunity}
+                    >
+                      <Text style={[
+                        styles.shareButtonText,
+                        { color: isFeatureUnlocked('community_challenges') ? BrandColors.text : BrandColors.textSecondary }
+                      ]}>
+                        Share with Community
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[styles.finishButton, { backgroundColor: BrandColors.accent }]}
+                      onPress={handleFinishWorkout}
+                    >
+                      <Text style={[styles.finishButtonText, { color: BrandColors.text }] }>
+                        Finish Workout
+                      </Text>
+                    </TouchableOpacity>
+                  </>
                 )}
               </>
             )}
@@ -2877,7 +3000,6 @@ export default function WorkoutScreen() {
           firebasePlayerNames={firebasePlayerNames}
           completedWorkout={completedWorkoutToShare}
           onClose={() => {
-            console.log('📤 ShareModal closing');
             setShowShareModal(false);
           }}
           onCommunitySelect={() => {}}
@@ -2903,6 +3025,16 @@ export default function WorkoutScreen() {
           initialAssignedDate={assignedDateForShare}
           isCoach={isCoach}
         />
+        <Modal
+          visible={showWorkoutPlanGenerator}
+          animationType="slide"
+          presentationStyle="fullScreen"
+        >
+          <WorkoutPlanGenerator 
+            isInitialGeneration={false}
+            onClose={() => setShowWorkoutPlanGenerator(false)}
+          />
+        </Modal>
         
         {/* Date Picker Modal for Coach Assignment Date */}
         <DatePickerModal
@@ -2915,7 +3047,6 @@ export default function WorkoutScreen() {
             }
           }}
           onDateSelect={(date) => {
-            console.log('📅 Date selected for assignment:', date);
             setAssignedDateForShare(date);
             setShowDatePickerForShare(false);
             // Small delay to ensure state is updated before opening share modal
@@ -2938,10 +3069,10 @@ export default function WorkoutScreen() {
     
     // Return a simple error screen
     return (
-      <View style={styles.container}>
-        <Text style={styles.headerTitle}>Workout</Text>
-        <Text style={{ color: 'red', textAlign: 'center', marginTop: 50 }}>
-          Error loading workout screen. Please try again.
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: BrandColors.background }}>
+        <Text style={{ color: BrandColors.text, fontSize: 18, fontWeight: '600', marginBottom: 10 }}>Workout</Text>
+        <Text style={{ color: 'red', textAlign: 'center', marginTop: 50, paddingHorizontal: 20 }}>
+          Error loading workout screen. Please try again or restart the app.
         </Text>
       </View>
     );
@@ -2971,7 +3102,7 @@ const styles = StyleSheet.create({
     paddingBottom: 100, // Add bottom padding to ensure content is visible above action bar
   },
   weekPickerContainer: {
-    marginBottom: 16,
+    marginBottom: 4,
   },
   weekHeader: {
     flexDirection: 'row',
