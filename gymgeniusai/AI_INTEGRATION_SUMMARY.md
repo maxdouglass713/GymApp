@@ -57,8 +57,9 @@
 
 2. **Set API Key (if not already set):**
    ```bash
-   firebase functions:config:set gemini.api_key="AIzaSyAIop08IyiE-7eDJIYEmGCwh-lxkLzBOJo"
+   firebase functions:config:set gemini.api_key="YOUR_GEMINI_API_KEY_HERE"
    ```
+   **⚠️ IMPORTANT:** Replace with your actual API key from Google AI Studio. Never commit your API key to the repository.
 
 3. **Build Functions:**
    ```bash
