@@ -8,6 +8,7 @@ import { useUserStore } from '@/stores/userStore';
 import { useAuth } from '@/components/AuthProvider';
 import OnboardingStep from '@/components/OnboardingStep';
 import { calculatePersonalizedMacros } from '@/utils/macroCalculator';
+import { teamService } from '@/services/teamService';
 
 export default function OnboardingScreen() {
   const colorScheme = useColorScheme();
@@ -17,6 +18,7 @@ export default function OnboardingScreen() {
   const isStepValid = useOnboardingStore((state) => state.isStepValid);
   const setCurrentStep = useOnboardingStore((state) => state.setCurrentStep);
   const data = useOnboardingStore((state) => state.data);
+  const updateData = useOnboardingStore((state) => state.updateData);
   const restoreSavedProgress = useOnboardingStore((state) => state.restoreSavedProgress);
   const hasRestored = useOnboardingStore((state) => state.hasRestored);
   const clearSavedProgress = useOnboardingStore((state) => state.clearSavedProgress);
@@ -27,6 +29,19 @@ export default function OnboardingScreen() {
   useEffect(() => {
     restoreSavedProgress();
   }, [restoreSavedProgress]);
+
+  // HIDDEN for v1.0: Auto-advance past step 0 (subscription tier) - always skip it
+  // Step 0 is completely hidden, subscription tier is auto-set to 'basic'
+  useEffect(() => {
+    if (hasRestored && currentStep === 0) {
+      // Auto-set Basic tier if not already set (hidden enforcement for v1.0)
+      if (!data.subscriptionTier || data.subscriptionTier !== 'basic') {
+        updateData({ subscriptionTier: 'basic' });
+      }
+      // Immediately skip step 0 and go directly to step 1 (birthday)
+      setCurrentStep(1);
+    }
+  }, [hasRestored, currentStep, data.subscriptionTier, setCurrentStep, updateData]);
 
   const handleNext = () => {
     if (currentStep < totalSteps - 1) {
@@ -47,24 +62,11 @@ export default function OnboardingScreen() {
     
     try {
       console.log('🔄 Completing onboarding...');
-      console.log('👤 User UID:', user?.uid || 'No user (bypass mode)');
+      console.log('👤 User UID:', user?.uid || 'No user');
       console.log('📋 Profile data:', data);
       
       if (!user) {
-        // Bruce Wayne bypass mode - save to local storage only
-        console.log('🦇 Bruce Wayne bypass mode - saving onboarding data locally');
-        
-        // Save onboarding data to local storage
-        await setProfile(data);
-        
-        await clearSavedProgress();
-
-        Alert.alert(
-          'Onboarding Complete!', 
-          'Your profile has been saved locally. You can now use the app!',
-          [{ text: 'OK', onPress: () => router.replace('/(tabs)') }]
-        );
-        return;
+        throw new Error('User must be authenticated to complete onboarding');
       }
       
       // Normal authenticated user flow
@@ -105,9 +107,24 @@ export default function OnboardingScreen() {
       if (data.teamInviteCode !== undefined) profileUpdates.teamInviteCode = data.teamInviteCode;
       if (data.teamId !== undefined) profileUpdates.teamId = data.teamId;
       
-      // Set default values for new users
-      profileUpdates.planTier = 'free';
-      profileUpdates.points = 0;
+      // V1.0: Force personal use only and Basic tier
+      // Block team/institution/trainer access
+      if (data.appUseType === 'team_institution' || data.appUseType === 'gym_trainer') {
+        console.warn('⚠️ Team/institution/trainer access blocked for v1.0 - forcing personal use');
+        profileUpdates.appUseType = 'personal';
+      } else if (data.appUseType !== undefined) {
+        profileUpdates.appUseType = data.appUseType;
+      }
+      
+      // V1.0: Force Basic tier only - no upgrades allowed
+      profileUpdates.planTier = 'basic';
+      // Set initial points based on tier
+      // Basic tier gets initial Volts to use AI features, Pro/Elite get 0 (they use limits/costs differently)
+      if (profileUpdates.planTier === 'basic') {
+        profileUpdates.points = 10000; // Give Basic tier users 10,000 Volts to start
+      } else {
+        profileUpdates.points = 0; // Pro and Elite use monthly limits, not Volts
+      }
       profileUpdates.streaks = {
         workouts: 0,
         cardio: 0,
@@ -153,6 +170,24 @@ export default function OnboardingScreen() {
       // Fetch updated user document from Firebase
       await fetchUserDoc(user.uid);
       
+      // If user is a client joining a trainer's team, add them to the team
+      const isClient = data.appUseType === 'gym_trainer' && data.institutionRole === 'player';
+      if (isClient && data.teamId && user?.uid) {
+        try {
+          console.log('👤 Client detected - joining trainer team:', data.teamId);
+          const playerName = data.firstName || user?.displayName || 'Client';
+          const success = await teamService.joinTeam(data.teamId, user.uid, playerName);
+          if (success) {
+            console.log('✅ Client successfully joined trainer team');
+          } else {
+            console.warn('⚠️ Client may already be a member of the team');
+          }
+        } catch (error) {
+          console.error('❌ Error joining trainer team:', error);
+          // Don't fail onboarding if team join fails - user can retry later
+        }
+      }
+      
       // Mark onboarding as complete
       await markOnboardingComplete();
       
@@ -179,7 +214,11 @@ export default function OnboardingScreen() {
   };
 
   const canProceed = isStepValid(currentStep);
-  const progress = (currentStep + 1) / totalSteps;
+  // Adjust progress display: step 0 is hidden, so birthday (step 1) should show as "Question 1"
+  // Total visible steps = 9 (steps 1-9, excluding hidden step 0)
+  const visibleTotalSteps = totalSteps - 1; // Exclude hidden step 0
+  const visibleStep = currentStep === 0 ? 0 : currentStep; // Step 0 is hidden, so step 1 becomes visible step 1
+  const progress = currentStep === 0 ? 0 : (visibleStep) / visibleTotalSteps;
 
   if (!hasRestored) {
     return (
@@ -207,22 +246,25 @@ export default function OnboardingScreen() {
           />
         </View>
         <Text style={[styles.progressText, { color: colors.icon }]}>
-          {currentStep + 1} of {totalSteps}
+          {currentStep === 0 ? '' : `${visibleStep} of ${visibleTotalSteps}`}
         </Text>
       </View>
 
       {/* Auto-save indicator removed per request; autosave still runs silently */}
 
       {/* Step Content */}
-      <View style={styles.stepContainer}>
-        <ScrollView
-          contentContainerStyle={styles.stepContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          <OnboardingStep step={currentStep} />
-        </ScrollView>
-      </View>
+      {/* HIDDEN for v1.0: Step 0 (subscription tier) is completely hidden - auto-advance to step 1 */}
+      {currentStep !== 0 && (
+        <View style={styles.stepContainer}>
+          <ScrollView
+            contentContainerStyle={styles.stepContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <OnboardingStep step={currentStep} />
+          </ScrollView>
+        </View>
+      )}
 
       {/* Navigation Buttons */}
       <View style={styles.navigationContainer}>

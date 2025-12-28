@@ -115,14 +115,16 @@ function calculateBMR(weightKg: number, heightCm: number, age: number, sex?: str
 
 /**
  * Get activity multiplier based on weekly workout schedule
+ * Conservative multipliers to prevent false plateaus and improve user trust
  */
 function getActivityMultiplier(weeklySchedule?: number): number {
-  if (!weeklySchedule) return 1.2; // Sedentary default
+  if (!weeklySchedule) return 1.3; // Lightly active default
   
-  if (weeklySchedule <= 2) return 1.2;   // Sedentary
-  if (weeklySchedule <= 4) return 1.55;  // Moderately active
-  if (weeklySchedule <= 6) return 1.725; // Very active
-  return 1.9; // Extremely active (7 days)
+  if (weeklySchedule <= 2) return 1.3;   // Lightly Active
+  if (weeklySchedule <= 4) return 1.55;  // Moderately Active
+  if (weeklySchedule === 5) return 1.6;   // Active
+  if (weeklySchedule === 6) return 1.65;  // Very Active
+  return 1.7; // Extremely Active (7 days - capped conservatively)
 }
 
 /**
@@ -138,8 +140,11 @@ function calculateTDEE(bmr: number, weeklySchedule?: number): number {
  */
 function adjustCaloriesForGoal(tdee: number, goal?: string): { calories: number; adjustment: number } {
   if (!goal) {
+    console.log('⚠️ No goal provided, using maintenance (TDEE)');
     return { calories: tdee, adjustment: 0 };
   }
+  
+  console.log('🔍 Adjusting calories for goal:', goal, 'TDEE:', tdee);
   
   switch (goal) {
     case 'build_muscle':
@@ -148,7 +153,10 @@ function adjustCaloriesForGoal(tdee: number, goal?: string): { calories: number;
       return { calories: tdee + 300, adjustment: 300 };
     case 'lose_fat':
     case 'lose_weight':
-      return { calories: tdee - 500, adjustment: -500 };
+      // Apply 500 calorie deficit for fat loss
+      const deficitCalories = Math.max(tdee - 500, 1200); // Minimum 1200 calories for safety
+      console.log('✅ Applying 500 cal deficit for lose_fat:', tdee, '->', deficitCalories);
+      return { calories: deficitCalories, adjustment: -500 };
     case 'improve_endurance':
       return { calories: tdee + 150, adjustment: 150 };
     case 'improve_fitness':
@@ -157,6 +165,7 @@ function adjustCaloriesForGoal(tdee: number, goal?: string): { calories: number;
     case 'stay_fit':
     case 'flexibility':
     default:
+      console.log('ℹ️ Using maintenance calories (no adjustment) for goal:', goal);
       return { calories: tdee, adjustment: 0 };
   }
 }
@@ -224,7 +233,20 @@ export function calculatePersonalizedMacros(profile: UserProfileData): MacroCalc
   const weightLb = profile.weight.unit === 'lb' 
     ? (typeof profile.weight.value === 'number' ? profile.weight.value : parseFloat(profile.weight.value.toString()))
     : weightKg * 2.20462;
-  const primaryGoal = profile.goals && profile.goals.length > 0 ? profile.goals[0] : profile.primaryGoal;
+  
+  // Determine primary goal: check goals array first, then primaryGoal field
+  // Also check if 'lose_fat' is in the goals array (even if not first)
+  let primaryGoal = profile.primaryGoal;
+  if (profile.goals && profile.goals.length > 0) {
+    // Check if 'lose_fat' is in the goals array
+    const loseFatIndex = profile.goals.findIndex(g => g === 'lose_fat' || g === 'lose_weight');
+    if (loseFatIndex >= 0) {
+      primaryGoal = 'lose_fat';
+    } else {
+      // Otherwise use the first goal
+      primaryGoal = profile.goals[0] as any;
+    }
+  }
   
   // Step 2: Calculate age
   const age = calculateAge(profile.birthday) || 25; // Default to 25 if no birthday
@@ -236,7 +258,19 @@ export function calculatePersonalizedMacros(profile: UserProfileData): MacroCalc
   const tdee = calculateTDEE(bmr, profile.weeklySchedule);
   
   // Step 5: Adjust for goal
+  console.log('🎯 Macro Calculation Debug:', {
+    primaryGoal,
+    goals: profile.goals,
+    tdee,
+    profilePrimaryGoal: profile.primaryGoal
+  });
   const { calories, adjustment } = adjustCaloriesForGoal(tdee, primaryGoal);
+  console.log('📊 Calorie Adjustment:', {
+    tdee,
+    goal: primaryGoal,
+    adjustment,
+    finalCalories: calories
+  });
   
   // Step 6: Calculate macro split
   const macros = calculateMacros(calories, weightLb, primaryGoal);

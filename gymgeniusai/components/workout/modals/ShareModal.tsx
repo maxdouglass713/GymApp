@@ -386,13 +386,36 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                       Loading player names...
                     </Text>
                   </View>
-                ) : (selectedCommunity?.firebaseTeam?.members || []).filter((member: any) => member.role === 'player').length > 0 ? (
-                  selectedCommunity.firebaseTeam.members.filter((member: any) => member.role === 'player').map((member: any) => {
+                ) : (() => {
+                  // Deduplicate members by userId to prevent duplicate keys
+                  const uniqueMembers = new Map<string, any>();
+                  (selectedCommunity?.firebaseTeam?.members || []).forEach((member: any) => {
+                    if (member.role === 'player' && member.userId) {
+                      if (!uniqueMembers.has(member.userId)) {
+                        uniqueMembers.set(member.userId, member);
+                      }
+                    }
+                  });
+                  return Array.from(uniqueMembers.values());
+                })().length > 0 ? (
+                  (() => {
+                    // Deduplicate members by userId
+                    const uniqueMembers = new Map<string, any>();
+                    (selectedCommunity?.firebaseTeam?.members || []).forEach((member: any) => {
+                      if (member.role === 'player' && member.userId) {
+                        if (!uniqueMembers.has(member.userId)) {
+                          uniqueMembers.set(member.userId, member);
+                        }
+                      }
+                    });
+                    return Array.from(uniqueMembers.values());
+                  })().map((member: any, index: number) => {
                     // Prioritize Firebase-loaded names
                     const playerName = firebasePlayerNames[member.userId] || member.name || 'Player';
+                    const memberKey = member.userId || `${playerName}-${index}`;
                     return (
                       <TouchableOpacity
-                        key={member.userId}
+                        key={memberKey}
                         style={[
                           ComponentStyles.button.secondary,
                           styles.playerCard,

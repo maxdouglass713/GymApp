@@ -64,6 +64,7 @@ import { WorkoutPlanGenerator } from '@/components/WorkoutPlanGenerator';
 import { AISuggestExerciseButton } from '@/components/workout/AISuggestExerciseButton';
 import { logErrorToFirebase } from '@/utils/errorLogger';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 
 const MACHINE_PLATE_WEIGHTS = [45, 35, 25, 10, 5, 2.5] as const;
 const DEFAULT_MACHINE_BASE_WEIGHT = 25;
@@ -177,6 +178,7 @@ export default function WorkoutScreen() {
   const [cardioSpeed, setCardioSpeed] = useState('');
   const [cardioDistance, setCardioDistance] = useState('');
   const [cardioIntensity, setCardioIntensity] = useState('moderate');
+  const [cardioCaloriesBurned, setCardioCaloriesBurned] = useState('');
   const [customCardioMetrics, setCustomCardioMetrics] = useState<{ duration?: boolean; distance?: boolean } | null>(null);
   const [activeCustomCardioExerciseId, setActiveCustomCardioExerciseId] = useState<string | null>(null);
   type SetFocusRequest = { exerciseId: string; setId: string; field: 'weight' | 'reps' };
@@ -250,8 +252,52 @@ export default function WorkoutScreen() {
         return;
       }
 
+      // Build display name with equipment details (like cable exercises)
+      let displayName = exercise.name;
+      
+      // Safely extract equipment as string
+      let firstEquipment = '';
+      if (exercise.equipment) {
+        if (Array.isArray(exercise.equipment) && exercise.equipment.length > 0) {
+          const first = exercise.equipment[0];
+          firstEquipment = typeof first === 'string' ? first : '';
+        } else if (typeof exercise.equipment === 'string') {
+          firstEquipment = exercise.equipment;
+        }
+      }
+      
+      // If it's a machine/cable exercise with machine type, show details
+      if (exercise.machineType && exercise.machineType !== 'none' && firstEquipment) {
+        const machineTypeLabel = exercise.machineType === 'pin' ? 'Pin Loaded' : 'Plate Loaded';
+        displayName = `${exercise.name} (${firstEquipment} – ${machineTypeLabel})`;
+      } else if (firstEquipment && !exercise.isBodyweight && firstEquipment !== 'Bodyweight') {
+        // Show equipment if not bodyweight
+        displayName = `${exercise.name} (${firstEquipment})`;
+      }
+
+      // Create machine load metadata if machine type is specified
+      let machineLoad: MachineLoadMetadata | undefined;
+      if (exercise.machineType && exercise.machineType !== 'none' && firstEquipment) {
+        if (exercise.machineType === 'pin') {
+          machineLoad = {
+            type: 'pin',
+            exerciseName: exercise.name,
+            equipment: firstEquipment,
+          };
+        } else if (exercise.machineType === 'plate') {
+          machineLoad = {
+            type: 'plate',
+            exerciseName: exercise.name,
+            equipment: firstEquipment,
+            baseWeight: DEFAULT_MACHINE_BASE_WEIGHT,
+            plateCounts: createInitialPlateCounts(),
+          };
+        }
+      }
+
       const createdExercise = addExercise({
         name: exercise.name,
+        displayName: displayName,
         type: 'strength',
         muscleGroup: exercise.muscleGroup,
         equipment: exercise.equipment,
@@ -259,6 +305,7 @@ export default function WorkoutScreen() {
         trackingStyle: exercise.trackingStyle,
         customExerciseId: exercise.id,
         isCustom: true,
+        machineLoad: machineLoad,
       });
 
       setWorkoutType('strength');
@@ -325,17 +372,7 @@ export default function WorkoutScreen() {
     return `${year}-${month}-${day}`;
   };
 
-  useEffect(() => {
-    if (!pendingSetFocus) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 60);
-
-    return () => clearTimeout(timer);
-  }, [pendingSetFocus]);
+  // Removed scrollToEnd - let handleSetInputFocus handle scrolling to the focused input
 
   useEffect(() => {
     const unsubscribe = eventBus.subscribe('workout:openCardioBuilder', openCardioBuilder);
@@ -444,11 +481,22 @@ export default function WorkoutScreen() {
 
   // Handle exercise selection with equipment modal
   const handleExerciseSelection = (exerciseName: string) => {
+    if (!exerciseName || !exerciseName.trim()) {
+      console.warn('⚠️ Empty exercise name provided to handleExerciseSelection');
+      return;
+    }
+
     const exerciseData = EXERCISE_DATABASE[exerciseName as keyof typeof EXERCISE_DATABASE];
 
     if (!exerciseData) {
+      // Exercise not in database - add it directly
       const createdExercise = addExercise(exerciseName);
+      if (!createdExercise) {
+        console.error('❌ Failed to add exercise:', exerciseName);
+        return;
+      }
       setSearchQuery('');
+      Keyboard.dismiss();
       if (createdExercise?.sets?.length) {
         setPendingSetFocus({
           exerciseId: createdExercise.id,
@@ -497,8 +545,14 @@ export default function WorkoutScreen() {
       return;
     }
 
+    // Single equipment option, not a machine - add exercise directly
     const createdExercise = addExercise(`${exerciseName} (${firstEquipment})`);
+    if (!createdExercise) {
+      console.error('❌ Failed to add exercise:', exerciseName);
+      return;
+    }
     setSearchQuery('');
+    Keyboard.dismiss();
     if (createdExercise?.sets?.length) {
       setPendingSetFocus({
         exerciseId: createdExercise.id,
@@ -542,6 +596,15 @@ export default function WorkoutScreen() {
     }
 
     const createdExercise = addExercise(`${selectedExercise} (${equipment})`);
+    if (!createdExercise) {
+      console.error('❌ Failed to add exercise:', selectedExercise);
+      return;
+    }
+    setSearchQuery('');
+    Keyboard.dismiss();
+    setShowEquipmentModal(false);
+    setSelectedExercise('');
+    setAvailableEquipment([]);
     if (createdExercise?.sets?.length) {
       setPendingSetFocus({
         exerciseId: createdExercise.id,
@@ -550,10 +613,6 @@ export default function WorkoutScreen() {
       });
       suppressPlateModalSetRef.current = createdExercise.sets[0].id;
     }
-    setSearchQuery('');
-    setShowEquipmentModal(false);
-    setSelectedExercise('');
-    setAvailableEquipment([]);
   };
 
   const handleCableGripSelection = (grip: string) => {
@@ -571,6 +630,16 @@ export default function WorkoutScreen() {
       : grip.charAt(0).toUpperCase() + grip.slice(1) + ' Grip';
     
     const createdExercise = addExercise(`${pendingCableSelection.exerciseName} (${pendingCableSelection.equipment} – ${gripLabel})`);
+    if (!createdExercise) {
+      console.error('❌ Failed to add exercise:', pendingCableSelection.exerciseName);
+      return;
+    }
+    setPendingCableSelection(null);
+    setShowCableGripModal(false);
+    setSelectedExercise('');
+    setAvailableEquipment([]);
+    setSearchQuery('');
+    Keyboard.dismiss();
     if (createdExercise?.sets?.length) {
       setPendingSetFocus({
         exerciseId: createdExercise.id,
@@ -579,11 +648,6 @@ export default function WorkoutScreen() {
       });
       suppressPlateModalSetRef.current = createdExercise.sets[0].id;
     }
-    setPendingCableSelection(null);
-    setShowCableGripModal(false);
-    setSelectedExercise('');
-    setAvailableEquipment([]);
-    setSearchQuery('');
   };
 
   const resetMachineSelectionState = () => {
@@ -838,9 +902,8 @@ export default function WorkoutScreen() {
     }
 
     // Determine scroll offset based on field type
-    // For weight inputs, use a much larger offset (600px) to push the input well above the keyboard
-    // This ensures users can see the input clearly when entering weight values
-    const scrollOffset = field === 'weight' ? 600 : field === 'reps' ? 350 : 200;
+    // Use moderate offsets to position input above keyboard with some breathing room
+    const scrollOffset = field === 'weight' ? 250 : field === 'reps' ? 200 : 150;
 
     requestAnimationFrame(() => {
       const responder = scrollViewRef.current as any;
@@ -917,21 +980,21 @@ export default function WorkoutScreen() {
   useEffect(() => {
     const checkDayChange = async () => {
       try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const selectedDateCopy = new Date(selectedDate);
-        selectedDateCopy.setHours(0, 0, 0, 0);
-        
-        // If viewing today's workout and it's a new day, clear current workout
-        if (selectedDateCopy.getTime() === today.getTime() && currentWorkout.exercises && currentWorkout.exercises.length > 0) {
-          try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const selectedDateCopy = new Date(selectedDate);
+      selectedDateCopy.setHours(0, 0, 0, 0);
+      
+      // If viewing today's workout and it's a new day, clear current workout
+      if (selectedDateCopy.getTime() === today.getTime() && currentWorkout.exercises && currentWorkout.exercises.length > 0) {
+        try {
             // Validate AsyncStorage is available before using
             if (!AsyncStorage || typeof AsyncStorage.getItem !== 'function') {
               console.error('❌ AsyncStorage not available');
               return;
             }
             
-            const lastDateKey = 'lastWorkoutDate';
+          const lastDateKey = 'lastWorkoutDate';
             let lastDateStr: string | null = null;
             
             try {
@@ -951,24 +1014,24 @@ export default function WorkoutScreen() {
               try {
                 const lastDate = new Date(lastDateStr);
                 if (!isNaN(lastDate.getTime())) {
-                  lastDate.setHours(0, 0, 0, 0);
-                  // If last date is different from today, it's a new day - clear workout
-                  if (lastDate.getTime() !== today.getTime()) {
+            lastDate.setHours(0, 0, 0, 0);
+            // If last date is different from today, it's a new day - clear workout
+            if (lastDate.getTime() !== today.getTime()) {
                     if (typeof clearCurrentWorkout === 'function') {
-                      clearCurrentWorkout();
-                    }
+              clearCurrentWorkout();
+            }
                   }
                 }
               } catch (dateError) {
                 console.error('❌ Error parsing date from AsyncStorage:', dateError);
                 // Continue - invalid date is not critical
               }
-            }
-            
+          }
+          
             // Update last tracked date - wrap in try-catch with error logging
             try {
               if (AsyncStorage && typeof AsyncStorage.setItem === 'function') {
-                await AsyncStorage.setItem(lastDateKey, today.toISOString());
+          await AsyncStorage.setItem(lastDateKey, today.toISOString());
               }
             } catch (setError) {
               console.error('❌ Error writing to AsyncStorage:', setError);
@@ -979,7 +1042,7 @@ export default function WorkoutScreen() {
               }).catch(() => {});
               // Don't crash if write fails
             }
-          } catch (error) {
+        } catch (error) {
             console.error('❌ Error in checkDayChange AsyncStorage block:', error);
             // Log to Firebase but don't crash
             logErrorToFirebase(error instanceof Error ? error : new Error(String(error)), {
@@ -1031,12 +1094,12 @@ export default function WorkoutScreen() {
     if (user && user.uid) {
       // Wrap in try-catch to prevent crashes
       try {
-        loadWorkoutsFromFirebase(user.uid).catch((error) => {
-          console.error('❌ Error loading workouts in workout screen:', error);
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-          console.error('❌ Error message:', errorMessage);
-          console.error('❌ Error stack:', errorStack);
+      loadWorkoutsFromFirebase(user.uid).catch((error) => {
+        console.error('❌ Error loading workouts in workout screen:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+        console.error('❌ Error message:', errorMessage);
+        console.error('❌ Error stack:', errorStack);
           // Log to Firebase for debugging
           logErrorToFirebase(error instanceof Error ? error : new Error(String(error)), {
             component: 'WorkoutScreen.loadWorkoutsFromFirebase',
@@ -1044,8 +1107,8 @@ export default function WorkoutScreen() {
           }).catch((logErr) => {
             console.error('❌ Failed to log error to Firebase:', logErr);
           });
-          // Don't crash the app - just log the error
-        });
+        // Don't crash the app - just log the error
+      });
       } catch (error) {
         console.error('❌ Fatal error loading workouts:', error);
         // Don't crash - continue with empty workout history
@@ -1101,7 +1164,7 @@ export default function WorkoutScreen() {
           return;
         }
         
-        // First check workout history
+      // First check workout history
         let workout = null;
         try {
           workout = getWorkoutForDate(selectedDate);
@@ -1116,25 +1179,35 @@ export default function WorkoutScreen() {
           : null;
       const selectedKey = getLocalDateKey(selectedDate);
 
-      if (!workout && currentKey && currentKey === selectedKey && currentWorkout?.exercises?.length) {
-        const draftWorkout = {
-          id: currentWorkout.id || generateUniqueId('draft'),
-          title:
-            currentWorkout.title ||
-            `Workout – ${selectedDate.toLocaleDateString('en-US', {
-              weekday: 'long',
-              month: 'long',
-              day: 'numeric',
-            })}`,
-          date: selectedKey,
-          exercises: currentWorkout.exercises,
-          createdAt: currentWorkout.createdAt || new Date(),
-          completedAt: undefined,
-        };
+      // Preserve draft workout if:
+      // 1. No saved workout found for this date
+      // 2. currentWorkout has exercises
+      // 3. Either currentKey matches selectedKey OR currentKey is null (new draft without date set yet)
+      if (!workout && currentWorkout?.exercises?.length) {
+        const shouldPreserveDraft = 
+          !currentKey || // New draft without date set yet
+          currentKey === selectedKey; // Existing draft for this date
+        
+        if (shouldPreserveDraft) {
+          const draftWorkout = {
+            id: currentWorkout.id || generateUniqueId('draft'),
+            title:
+              currentWorkout.title ||
+              `Workout – ${selectedDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              })}`,
+            date: selectedKey,
+            exercises: currentWorkout.exercises,
+            createdAt: currentWorkout.createdAt || new Date(),
+            completedAt: undefined,
+          };
 
-        setTodaysWorkout(draftWorkout);
-        setIsViewingExistingWorkout(false);
-        return;
+          setTodaysWorkout(draftWorkout);
+          setIsViewingExistingWorkout(false);
+          return;
+        }
       }
       
       // For coaches: Check if there are any assigned workouts for this date and load the first one to display
@@ -1497,29 +1570,44 @@ export default function WorkoutScreen() {
           }
         }
       } else {
-        if (currentKey && currentKey === selectedKey && currentWorkout?.exercises?.length) {
-          const workoutStatus = (currentWorkout as any).status;
-          setTodaysWorkout({
-            id: currentWorkout.id || generateUniqueId('draft'),
-            title:
-              currentWorkout.title ||
-              `Workout – ${selectedDate && selectedDate instanceof Date && !isNaN(selectedDate.getTime()) ? selectedDate.toLocaleDateString('en-US', {
-                weekday: 'long',
-                month: 'long',
-                day: 'numeric',
-              }) : new Date().toLocaleDateString('en-US', {
-                weekday: 'long',
-                month: 'long',
-                day: 'numeric',
-              })}`,
-            date: selectedKey,
-            exercises: currentWorkout.exercises,
-            createdAt: currentWorkout.createdAt || new Date(),
-            completedAt: undefined,
-            status: workoutStatus || 'draft',
-          });
-          viewingExisting = workoutStatus === 'completed';
+        // Preserve draft workout if:
+        // 1. currentWorkout has exercises
+        // 2. Either currentKey matches selectedKey OR currentKey is null (new draft without date set yet)
+        if (currentWorkout?.exercises?.length) {
+          const shouldPreserveDraft = 
+            !currentKey || // New draft without date set yet
+            currentKey === selectedKey; // Existing draft for this date
+          
+          if (shouldPreserveDraft) {
+            const workoutStatus = (currentWorkout as any).status;
+            setTodaysWorkout({
+              id: currentWorkout.id || generateUniqueId('draft'),
+              title:
+                currentWorkout.title ||
+                `Workout – ${selectedDate && selectedDate instanceof Date && !isNaN(selectedDate.getTime()) ? selectedDate.toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  month: 'long',
+                  day: 'numeric',
+                }) : new Date().toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  month: 'long',
+                  day: 'numeric',
+                })}`,
+              date: selectedKey,
+              exercises: currentWorkout.exercises,
+              createdAt: currentWorkout.createdAt || new Date(),
+              completedAt: undefined,
+              status: workoutStatus || 'draft',
+            });
+            viewingExisting = workoutStatus === 'completed';
+          } else {
+            // Different date - clear the workout
+            clearCurrentWorkout();
+            workoutForCard = null;
+            viewingExisting = false;
+          }
         } else {
+          // No exercises - clear the workout
           clearCurrentWorkout();
           workoutForCard = null;
           viewingExisting = false;
@@ -1560,7 +1648,7 @@ export default function WorkoutScreen() {
     
     // Safely call loadWorkoutForDate with error handling
     try {
-      loadWorkoutForDate();
+    loadWorkoutForDate();
     } catch (error) {
       console.error('❌ Fatal error calling loadWorkoutForDate:', error);
       // Continue - the error is already logged
@@ -2026,6 +2114,7 @@ export default function WorkoutScreen() {
       speed: cardioSpeed ? parseFloat(cardioSpeed) : null,
       distance: cardioDistance ? parseFloat(cardioDistance) : null,
       intensity: cardioIntensity,
+      caloriesBurned: cardioCaloriesBurned ? parseFloat(cardioCaloriesBurned) : null,
       type: 'cardio' as const,
       customExerciseId: activeCustomCardioExerciseId || undefined,
       isCustom: Boolean(activeCustomCardioExerciseId),
@@ -2047,6 +2136,7 @@ export default function WorkoutScreen() {
     setCardioSpeed('');
     setCardioDistance('');
     setCardioIntensity('moderate');
+    setCardioCaloriesBurned('');
     setCustomCardioMetrics(null);
     setActiveCustomCardioExerciseId(null);
     setShowCardioModal(false);
@@ -2394,12 +2484,14 @@ export default function WorkoutScreen() {
                       <View style={{ height: 1, backgroundColor: BrandColors.gray800 }} />
                     </View>
                   )}
-                  <WorkoutTypeToggle
-                    workoutType={workoutType}
-                    onTypeChange={setWorkoutType}
-                  />
+                  {!showCardioModal && (
+                    <WorkoutTypeToggle
+                      workoutType={workoutType}
+                      onTypeChange={setWorkoutType}
+                    />
+                  )}
                   <WorkoutMetadata
-                    title={currentWorkout.title || ''}
+                    title={currentWorkout?.title || ''}
                     onTitleChange={setWorkoutTitle}
                   />
                   <ExerciseSearch
@@ -2409,6 +2501,7 @@ export default function WorkoutScreen() {
                     onSearchFocus={handleSearchFocus}
                     onSearchLayout={handleSearchLayout}
                     onExerciseSelect={handleExerciseSelection}
+                    isKeyboardVisible={isKeyboardVisible}
                     onCardioSelect={(activity) => {
                       setSelectedCardioActivity(activity);
                       setCustomCardioMetrics(null);
@@ -2421,17 +2514,27 @@ export default function WorkoutScreen() {
                       setActiveCustomCardioExerciseId(null);
                       setShowCardioModal(true);
                     }}
-                    hasExercises={!!(currentWorkout.exercises && currentWorkout.exercises.length > 0)}
+                    hasExercises={!!(currentWorkout?.exercises && currentWorkout.exercises.length > 0)}
                     customExercises={customExercises}
                     onCustomExerciseSelect={handleCustomExerciseSelect}
                     onCreateCustomExercise={handleCreateCustomExercisePress}
                   />
                   
-                  {currentWorkout.exercises && Array.isArray(currentWorkout.exercises) ? 
-                    currentWorkout.exercises.map((exercise, index) => (
-                      <Fragment key={`exercise-${exercise.id || 'ex-' + index}-${index}-${currentWorkout.id || 'current'}`}>
+                  {currentWorkout?.exercises && Array.isArray(currentWorkout.exercises) ? 
+                    currentWorkout.exercises
+                      .filter((exercise) => exercise && exercise.id) // Filter out null/undefined exercises
+                      .map((exercise, index) => {
+                        // Clean exercise with filtered sets (don't mutate original)
+                        const cleanExercise = {
+                          ...exercise,
+                          sets: exercise.sets && Array.isArray(exercise.sets) 
+                            ? exercise.sets.filter((set: any) => set && set.id)
+                            : exercise.sets || []
+                        };
+                        return (
+                          <Fragment key={`exercise-${cleanExercise.id || 'ex-' + index}-idx-${index}-workout-${currentWorkout?.id || 'current'}-setCount-${cleanExercise.sets?.length || 0}`}>
                         <ExerciseCard
-                          exercise={exercise}
+                              exercise={cleanExercise}
                           validationErrors={validationErrors}
                           onUpdateSet={updateSet}
                           onRemoveExercise={removeExercise}
@@ -2444,10 +2547,10 @@ export default function WorkoutScreen() {
                           onInputFocus={handleSetInputFocus}
                           onWeightFocus={handleWeightInputFocus}
                         />
-                        {/* AI Suggest Next Exercise Button */}
-                        {exercise.type !== 'cardio' && (
+                        {/* AI Suggest Next Exercise Button - HIDDEN for v1.0 to avoid "Coming Soon" in screenshots */}
+                        {false && cleanExercise.type !== 'cardio' && (
                           <AISuggestExerciseButton
-                            currentExercises={currentWorkout.exercises || []}
+                            currentExercises={currentWorkout?.exercises || []}
                             workoutType={workoutType}
                             onExerciseSuggested={(exerciseName) => {
                               handleExerciseSelection(exerciseName);
@@ -2455,7 +2558,8 @@ export default function WorkoutScreen() {
                           />
                         )}
                       </Fragment>
-                    )) : null}
+                        );
+                      }) : null}
                 </>
               )}
               </View>
@@ -2552,9 +2656,8 @@ export default function WorkoutScreen() {
               </>
             ) : (
               <>
-                {/* For players: Keep the original share and finish buttons */}
-                {!isViewingExistingWorkout && !isEditingCompletedWorkout && (
-                  <>
+                {/* Share button - HIDDEN for v1.0 to avoid "Coming Soon" in screenshots */}
+                {false && !isViewingExistingWorkout && !isEditingCompletedWorkout && (
                     <TouchableOpacity
                       style={[
                         styles.shareButton,
@@ -2572,7 +2675,10 @@ export default function WorkoutScreen() {
                         Share with Community
                       </Text>
                     </TouchableOpacity>
+                )}
                     
+                {/* Finish Workout button - VISIBLE */}
+                {!isViewingExistingWorkout && !isEditingCompletedWorkout && (
                     <TouchableOpacity
                       style={[styles.finishButton, { backgroundColor: BrandColors.accent }]}
                       onPress={handleFinishWorkout}
@@ -2581,7 +2687,6 @@ export default function WorkoutScreen() {
                         Finish Workout
                       </Text>
                     </TouchableOpacity>
-                  </>
                 )}
               </>
             )}
@@ -2628,6 +2733,7 @@ export default function WorkoutScreen() {
           speed={cardioSpeed}
           distance={cardioDistance}
           intensity={cardioIntensity}
+          caloriesBurned={cardioCaloriesBurned}
           onClose={() => {
             setShowCardioModal(false);
             setCustomCardioMetrics(null);
@@ -2638,6 +2744,7 @@ export default function WorkoutScreen() {
           onSpeedChange={setCardioSpeed}
           onDistanceChange={setCardioDistance}
           onIntensityChange={setCardioIntensity}
+          onCaloriesBurnedChange={setCardioCaloriesBurned}
           onAdd={handleAddCardio}
           metricConfig={customCardioMetrics || undefined}
         />
@@ -2760,10 +2867,14 @@ export default function WorkoutScreen() {
                     },
                   ]}
                   onPress={toggleBaseWeightEditing}
+                  hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                 >
-                  <Text style={[styles.baseWeightEditIcon, { color: BrandColors.text }]}>
-                    {isEditingBaseWeight ? '✔' : '✏️'}
-                  </Text>
+                  <IconSymbol
+                    name={isEditingBaseWeight ? 'checkmark.circle.fill' : 'pencil'}
+                    size={18}
+                    color={BrandColors.text}
+                    style={styles.baseWeightEditIcon}
+                  />
                 </TouchableOpacity>
                 <Text style={[styles.baseWeightLabel, { color: BrandColors.text }]}>
                   Machine starting weight
@@ -2870,13 +2981,16 @@ export default function WorkoutScreen() {
                 })()}
               </View>
               <TouchableOpacity
-                style={[styles.modalCancelButton, { borderColor: BrandColors.gray700 }]}
+                style={[styles.modalCancelButton, { 
+                  backgroundColor: 'rgba(0, 229, 255, 0.15)',
+                  borderColor: BrandColors.accent,
+                }]}
                 onPress={() => {
                   setShowCableGripModal(false);
                   setPendingCableSelection(null);
                 }}
               >
-                <Text style={[styles.modalCancelText, { color: BrandColors.textSecondary }]}>
+                <Text style={[styles.modalCancelText, { color: BrandColors.accent }]}>
                   Cancel
                 </Text>
               </TouchableOpacity>
@@ -3091,14 +3205,14 @@ const styles = StyleSheet.create({
   segmentedControlWrapper: {
     paddingHorizontal: 16,
     paddingTop: 60, // Move down to be visible on screen
-    paddingBottom: 8,
+    paddingBottom: 0, // Reduced from 8 to eliminate extra space
   },
   scrollView: {
     flex: 1,
     paddingHorizontal: 16,
   },
   scrollContent: {
-    paddingTop: 16,
+    paddingTop: 4, // Reduced from 16 to eliminate extra space between calendar and titles
     paddingBottom: 100, // Add bottom padding to ensure content is visible above action bar
   },
   weekPickerContainer: {
@@ -3563,16 +3677,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   modalCancelButton: {
-    flex: 1,
+    width: '100%',
     borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     alignItems: 'center',
-    marginRight: 12,
+    marginTop: 8,
   },
   modalCancelText: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
   },
   modalTitle: {
     fontSize: 20,

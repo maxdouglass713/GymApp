@@ -1,0 +1,22 @@
+Your Support page is now ready! After deploying to Firebase Hosting, it will be available at:
+
+🔗 PRIMARY URL:
+https://gym-genius-ai-bd17c.web.app/support.html
+
+🔗 ALTERNATIVE URL:
+https://gym-genius-ai-bd17c.firebaseapp.com/support.html
+
+✅ Add this URL to App Store Connect:
+- Go to App Store Connect
+- Navigate to: App Information → Support URL
+- Paste: https://gym-genius-ai-bd17c.web.app/support.html
+
+📋 What's included in the Support page:
+- Contact email: support@kineticflowai.com
+- Frequently Asked Questions (FAQ)
+- Common issues & solutions
+- Feature request information
+- Links to Privacy Policy and Terms of Service
+
+🎉 Your support page is ready for App Store submission!
+

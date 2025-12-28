@@ -13,8 +13,13 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePointsStore } from '@/stores/pointsStore';
 import { useStoreStore, V_PACKS } from '@/stores/storeStore';
 import { useAuth } from '@/components/AuthProvider';
+import { checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
-export default function StoreScreen() {
+type StoreScreenProps = {
+  hideAdAndRestore?: boolean;
+};
+
+export default function StoreScreen({ hideAdAndRestore = false }: StoreScreenProps) {
   const colorScheme = useColorScheme();
   const colors = BrandColors;
   const { user } = useAuth();
@@ -26,6 +31,11 @@ export default function StoreScreen() {
   const [isWatchingAd, setIsWatchingAd] = useState(false);
 
   const handlePurchase = async (pack: any) => {
+    // Check feature flag - show "Coming Soon" if IAP is disabled
+    if (!checkFeatureOrShowComingSoon('gpPurchasing', 'Purchase GP Packs')) {
+      return;
+    }
+    
     setIsPurchasing(pack.sku);
     
     try {
@@ -83,18 +93,6 @@ export default function StoreScreen() {
     Alert.alert('Restore Purchases', 'Restored (simulated)');
   };
 
-  // DEBUG: Add 5000 V (temporary)
-  const handleDebugAddPoints = async () => {
-    if (user?.uid) {
-      await addPoints({
-        type: 'purchase',
-        amount: 5000,
-        description: 'DEBUG: Added 5000 V',
-      }, user.uid);
-      Alert.alert('Debug', '+5000 V added!');
-    }
-  };
-
   const renderBalanceSection = () => (
     <View style={styles.balanceSection}>
       <View style={styles.balanceHeader}>
@@ -107,24 +105,17 @@ export default function StoreScreen() {
       <Text style={[styles.purchaseNote, { color: colors.icon }]}>
         Redeem your points for upgrades and perks.
       </Text>
-
-      {/* DEBUG BUTTON - REMOVE LATER */}
-      <TouchableOpacity
-        style={[styles.debugButton, { backgroundColor: '#FF0000' }]}
-        onPress={handleDebugAddPoints}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.debugButtonText}>🔧 +5000 V (Debug)</Text>
-      </TouchableOpacity>
     </View>
   );
 
   const renderVPacks = () => (
+    // HIDDEN for v1.0 - Purchase buttons show "Coming Soon", avoid in screenshots
     <View style={styles.packsSection}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Featured Rewards</Text>
-      
-      <View style={styles.packsGrid}>
-        {V_PACKS.map((pack) => (
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Rewards</Text>
+      <Text style={[styles.purchaseNote, { color: colors.icon, textAlign: 'center', marginTop: 8 }]}>
+        Redeem your points for upgrades and perks in a future update. For now, keep earning points by logging workouts and meals.
+      </Text>
+      {/* {V_PACKS.map((pack) => (
           <TouchableOpacity
             key={pack.sku}
             style={[styles.packCard, { backgroundColor: colors.background, borderColor: colors.icon }]}
@@ -167,8 +158,7 @@ export default function StoreScreen() {
               </View>
             )}
           </TouchableOpacity>
-        ))}
-      </View>
+      ))} */}
     </View>
   );
 
@@ -236,13 +226,13 @@ export default function StoreScreen() {
         <View style={styles.header}>
           <Text style={[styles.mainTitle, { color: colors.text }]}>KINETIC FLOW Volts</Text>
           <Text style={[styles.subtitle, { color: colors.icon }]}>
-            Redeem your points for upgrades and perks.
+            Earn Volts for your consistency, then redeem them for rewards.
           </Text>
         </View>
         {renderBalanceSection()}
         {renderVPacks()}
-        {renderWatchAdSection()}
-        {renderRestoreSection()}
+        {!hideAdAndRestore && renderWatchAdSection()}
+        {!hideAdAndRestore && renderRestoreSection()}
       </ScrollView>
     </View>
   );
@@ -378,7 +368,7 @@ const styles = StyleSheet.create({
   },
   // New header styles
   header: {
-    paddingTop: 60,
+    paddingTop: 80,
     paddingBottom: 16,
     paddingHorizontal: 16,
     alignItems: 'center',
@@ -429,19 +419,6 @@ const styles = StyleSheet.create({
     minHeight: 24,
   },
   purchaseButtonText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  // DEBUG BUTTON STYLES - REMOVE LATER
-  debugButton: {
-    marginTop: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    alignSelf: 'center',
-  },
-  debugButtonText: {
-    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: 'bold',
   },

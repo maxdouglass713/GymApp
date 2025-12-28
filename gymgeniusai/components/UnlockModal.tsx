@@ -11,6 +11,7 @@ import { BrandColors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePointsStore, FEATURE_CATALOG } from '@/stores/pointsStore';
 import { useAuth } from './AuthProvider';
+import { isFeatureEnabled, checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
 interface UnlockModalProps {
   visible: boolean;
@@ -73,6 +74,11 @@ export function UnlockModal({ visible, onClose, featureKey, onUnlocked }: Unlock
   };
   
   const handleBuyGP = () => {
+    // Check feature flag - show "Coming Soon" if disabled
+    if (!checkFeatureOrShowComingSoon('gpPurchasing', 'Buy GP Packs')) {
+      return;
+    }
+    // TODO: Implement IAP/RevenueCat integration when feature is enabled
     Alert.alert(
       'Buy GP Packs',
       'GP purchase feature coming soon! Earn more points by completing workouts, logging meals, and maintaining streaks.',

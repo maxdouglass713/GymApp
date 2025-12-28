@@ -44,7 +44,7 @@ export const useUserStore = create<UserStore>((set, get) => ({
   // Local actions
   setProfile: async (profile) => {
     try {
-      // Save to AsyncStorage for Bruce Wayne bypass mode
+      // Save to AsyncStorage for local profile persistence
       await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
       console.log('💾 Profile saved to local storage:', profile);
       set({ profile, isOnboarded: true });
@@ -123,38 +123,32 @@ export const useUserStore = create<UserStore>((set, get) => ({
     try {
       console.log('🔄 Starting syncProfileToFirestore...');
       console.log('👤 UID:', uid);
-      console.log('📋 Profile:', profile);
+      console.log('📋 Profile:', JSON.stringify(profile, null, 2));
       
-      set({ loading: true, error: null });
-      
-      // For mock authentication, skip Firebase operations
-      if (uid.startsWith('mock-user-')) {
-        console.log('🎭 Mock user detected, skipping Firebase sync');
-        set({ loading: false, error: null });
-        return;
+      if (!uid) {
+        throw new Error('User UID is required');
       }
       
-      // Helper function to remove undefined values
-      const removeUndefined = (obj: any): any => {
-        return Object.fromEntries(
-          Object.entries(obj).filter(([_, value]) => value !== undefined)
-        );
-      };
+      if (!profile) {
+        throw new Error('Profile data is required');
+      }
+      
+      set({ loading: true, error: null });
       
       // First check if user document exists
       console.log('📖 Checking if user document exists...');
       const existingDoc = await userService.getUser(uid);
-      console.log('📄 Existing doc:', existingDoc);
+      console.log('📄 Existing doc:', existingDoc ? 'Found' : 'Not found');
       
       if (existingDoc) {
         console.log('✅ User document exists, updating...');
         // User document exists, update it
         const userUpdates: any = {
-          firstName: profile.firstName || '',
+          firstName: profile.firstName || existingDoc.firstName || '',
           onboardingCompleted: true,
         };
         
-        console.log('📝 UserStore: Updating user with firstName:', profile.firstName);
+        console.log('📝 UserStore: Updating user with firstName:', profile.firstName || existingDoc.firstName);
         
         // Only add height if it exists and has valid data
         if (profile.height?.value && profile.height?.unit) {
@@ -162,22 +156,32 @@ export const useUserStore = create<UserStore>((set, get) => ({
             value: profile.height.value, // Keep as string to preserve "5ft 10in" format
             unit: profile.height.unit,
           };
+        } else if (existingDoc.height) {
+          // Keep existing height if not provided
+          userUpdates.height = existingDoc.height;
         }
         
         // Only add weight if it exists and has valid data
         if (profile.weight?.value && profile.weight?.unit) {
           userUpdates.weight = {
-            value: parseFloat(profile.weight.value) || 0, // Convert to number for weight
+            value: parseFloat(String(profile.weight.value)) || 0, // Convert to number for weight
             unit: profile.weight.unit,
           };
+        } else if (existingDoc.weight) {
+          // Keep existing weight if not provided
+          userUpdates.weight = existingDoc.weight;
         }
         
-        // Only add optional fields if they have values
-        if (profile.birthday !== undefined) userUpdates.birthday = profile.birthday;
+        // Only add optional fields if they have values (or keep existing if updating)
+        if (profile.birthday !== undefined && profile.birthday !== null) {
+          userUpdates.birthday = profile.birthday;
+        }
         if (profile.sex !== undefined) userUpdates.sex = profile.sex;
         if (profile.exerciseExperience !== undefined) userUpdates.exerciseExperience = profile.exerciseExperience;
         if (profile.primaryGoal !== undefined) userUpdates.primaryGoal = profile.primaryGoal;
-        if (profile.goals !== undefined) userUpdates.goals = profile.goals;
+        if (profile.goals !== undefined && Array.isArray(profile.goals)) {
+          userUpdates.goals = profile.goals;
+        }
         if (profile.equipment !== undefined) userUpdates.equipment = profile.equipment;
         if (profile.weeklySchedule !== undefined) userUpdates.weeklySchedule = profile.weeklySchedule;
         if (profile.playsSports !== undefined) userUpdates.playsSports = profile.playsSports;
@@ -190,13 +194,21 @@ export const useUserStore = create<UserStore>((set, get) => ({
           userUpdates.nutritionPreference = profile.nutritionPreference === 'meal_ideas' ? 'simple_macros' : profile.nutritionPreference;
         }
         
-        console.log('📝 Updating user with:', userUpdates);
+        console.log('📝 Updating user with:', JSON.stringify(userUpdates, null, 2));
+        
+        try {
         await userService.updateUser(uid, userUpdates);
         console.log('✅ User updated successfully');
+        } catch (updateError: any) {
+          console.error('❌ Error updating user document:', updateError);
+          console.error('❌ Error message:', updateError?.message);
+          console.error('❌ Error code:', updateError?.code);
+          throw new Error(`Failed to update user document: ${updateError?.message || 'Unknown error'}`);
+        }
         
         // Verify the update worked
         const verifyDoc = await userService.getUser(uid);
-        console.log('🔍 Verification - Updated doc:', verifyDoc);
+        console.log('🔍 Verification - Updated doc:', verifyDoc ? 'Found' : 'Not found');
         if (!verifyDoc?.onboardingCompleted) {
           console.error('❌ CRITICAL: onboardingCompleted is still false after update!');
           throw new Error('Failed to update onboarding status');
@@ -309,6 +321,10 @@ export const useUserStore = create<UserStore>((set, get) => ({
       teamId: userDoc.teamId,
       injuries: userDoc.injuries,
       nutritionPreference: userDoc.nutritionPreference === 'detailed_tracking' || userDoc.nutritionPreference === 'photo_logging' ? 'simple_macros' : userDoc.nutritionPreference,
+      // App usage type
+      appUseType: userDoc.appUseType,
+      subscriptionTier: userDoc.planTier,
+      units: userDoc.settings?.units || 'imperial',
     };
     
     set({ profile, isOnboarded: userDoc.onboardingCompleted || false });
@@ -323,6 +339,12 @@ export const useUserStore = create<UserStore>((set, get) => ({
         carbs: userDoc.customMacroTargets.carbs,
         fat: userDoc.customMacroTargets.fat,
       });
+    }
+    
+    // Load subscription data into subscription store
+    if (userDoc) {
+      const { useSubscriptionStore } = require('@/stores/subscriptionStore');
+      useSubscriptionStore.getState().loadFromUserDoc(userDoc);
     }
   },
 }));

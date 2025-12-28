@@ -52,20 +52,25 @@ const convertTimestamps = (data: any): any => {
   return converted;
 };
 
-// Helper function to convert Date objects to Firestore timestamps
+// Helper function to convert Date objects to Firestore timestamps and remove undefined values
 const prepareForFirestore = (data: any): any => {
   if (!data) return data;
   
-  const prepared = { ...data };
-  Object.keys(prepared).forEach(key => {
-    if (prepared[key] instanceof Date) {
-      prepared[key] = Timestamp.fromDate(prepared[key]);
-    } else if (typeof prepared[key] === 'object' && prepared[key] !== null) {
-      prepared[key] = prepareForFirestore(prepared[key]);
+  // Remove undefined values first
+  const cleaned: any = {};
+  Object.keys(data).forEach(key => {
+    if (data[key] !== undefined) {
+      if (data[key] instanceof Date) {
+        cleaned[key] = Timestamp.fromDate(data[key]);
+      } else if (typeof data[key] === 'object' && data[key] !== null && !Array.isArray(data[key])) {
+        cleaned[key] = prepareForFirestore(data[key]);
+      } else {
+        cleaned[key] = data[key];
+      }
     }
   });
   
-  return prepared;
+  return cleaned;
 };
 
 // User operations
@@ -995,6 +1000,92 @@ export const communityService = {
     }
 
     return code;
+  },
+};
+
+// Global Custom Exercises service
+export const globalCustomExercisesService = {
+  async saveCustomExercise(exercise: any, userId: string): Promise<string> {
+    const exerciseRef = doc(db, COLLECTIONS.GLOBAL_CUSTOM_EXERCISES, exercise.id);
+    const exerciseDoc = {
+      ...exercise,
+      createdBy: userId,
+      createdAt: exercise.createdAt || new Date(),
+      updatedAt: new Date(),
+    };
+    
+    await setDoc(exerciseRef, prepareForFirestore(exerciseDoc));
+    return exercise.id;
+  },
+
+  async getAllCustomExercises(): Promise<any[]> {
+    const exercisesRef = collection(db, COLLECTIONS.GLOBAL_CUSTOM_EXERCISES);
+    const exercisesQuery = query(exercisesRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(exercisesQuery);
+    
+    return snapshot.docs.map((docSnap) =>
+      convertTimestamps({ id: docSnap.id, ...docSnap.data() })
+    );
+  },
+
+  async searchCustomExercises(searchQuery: string): Promise<any[]> {
+    const exercisesRef = collection(db, COLLECTIONS.GLOBAL_CUSTOM_EXERCISES);
+    const snapshot = await getDocs(exercisesRef);
+    
+    const allExercises = snapshot.docs.map((docSnap) =>
+      convertTimestamps({ id: docSnap.id, ...docSnap.data() })
+    );
+    
+    const queryLower = searchQuery.toLowerCase();
+    return allExercises.filter((exercise) => {
+      const nameMatch = exercise.name?.toLowerCase().includes(queryLower);
+      const muscleMatch = exercise.muscleGroup?.toLowerCase().includes(queryLower);
+      const equipmentMatch = Array.isArray(exercise.equipment)
+        ? exercise.equipment.some((eq: string) => eq.toLowerCase().includes(queryLower))
+        : false;
+      return nameMatch || muscleMatch || equipmentMatch;
+    });
+  },
+};
+
+// Global Custom Meals service
+export const globalCustomMealsService = {
+  async saveCustomMeal(meal: any, userId: string): Promise<string> {
+    const mealRef = doc(db, COLLECTIONS.GLOBAL_CUSTOM_MEALS, meal.id);
+    const mealDoc = {
+      ...meal,
+      createdBy: userId,
+      createdAt: meal.createdAt || new Date(),
+      updatedAt: new Date(),
+    };
+    
+    await setDoc(mealRef, prepareForFirestore(mealDoc));
+    return meal.id;
+  },
+
+  async getAllCustomMeals(): Promise<any[]> {
+    const mealsRef = collection(db, COLLECTIONS.GLOBAL_CUSTOM_MEALS);
+    const mealsQuery = query(mealsRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(mealsQuery);
+    
+    return snapshot.docs.map((docSnap) =>
+      convertTimestamps({ id: docSnap.id, ...docSnap.data() })
+    );
+  },
+
+  async searchCustomMeals(searchQuery: string): Promise<any[]> {
+    const mealsRef = collection(db, COLLECTIONS.GLOBAL_CUSTOM_MEALS);
+    const snapshot = await getDocs(mealsRef);
+    
+    const allMeals = snapshot.docs.map((docSnap) =>
+      convertTimestamps({ id: docSnap.id, ...docSnap.data() })
+    );
+    
+    const queryLower = searchQuery.toLowerCase();
+    return allMeals.filter((meal) => {
+      const nameMatch = meal.name?.toLowerCase().includes(queryLower);
+      return nameMatch;
+    });
   },
 };
 

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, NativeSyntheticEvent, NativeScrollEvent, Keyboard } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, NativeSyntheticEvent, NativeScrollEvent, Keyboard, Alert } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { BrandColors, Typography, Spacing, BorderRadius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOnboardingStore } from '@/stores/onboardingStore';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
 interface OnboardingStepProps {
   step: number;
@@ -18,6 +19,15 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
   const renderStep = () => {
     switch (step) {
       case 0:
+        // HIDDEN for v1.0 App Store submission - Auto-assign Basic tier
+        // Auto-set Basic tier if not already set
+        if (!data.subscriptionTier || data.subscriptionTier !== 'basic') {
+          updateData({ subscriptionTier: 'basic' });
+        }
+        // Return null - this step should be skipped entirely
+        // The onboarding screen will auto-advance past this step
+        return null;
+      case 1:
         return (
           <BirthdayStep
             colors={colors}
@@ -25,7 +35,7 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
             updateData={updateData}
           />
         );
-      case 1:
+      case 2:
         return (
           <HeightStep
             colors={colors}
@@ -33,7 +43,7 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
             updateData={updateData}
           />
         );
-      case 2:
+      case 3:
         return (
           <WeightStep
             colors={colors}
@@ -41,17 +51,17 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
             updateData={updateData}
           />
         );
-      case 3:
-        return <SexStep colors={colors} data={data} updateData={updateData} />;
       case 4:
-        return <ExperienceStep colors={colors} data={data} updateData={updateData} />;
+        return <SexStep colors={colors} data={data} updateData={updateData} />;
       case 5:
-        return <GoalStep colors={colors} data={data} updateData={updateData} />;
+        return <ExperienceStep colors={colors} data={data} updateData={updateData} />;
       case 6:
-        return <EquipmentStep colors={colors} data={data} updateData={updateData} />;
+        return <GoalStep colors={colors} data={data} updateData={updateData} />;
       case 7:
-        return <ScheduleStep colors={colors} data={data} updateData={updateData} />;
+        return <EquipmentStep colors={colors} data={data} updateData={updateData} />;
       case 8:
+        return <ScheduleStep colors={colors} data={data} updateData={updateData} />;
+      case 9:
         return <InjuriesStep colors={colors} data={data} updateData={updateData} />;
       default:
         return null;
@@ -62,6 +72,314 @@ export default function OnboardingStep({ step }: OnboardingStepProps) {
     <View style={styles.container}>
       {renderStep()}
     </View>
+  );
+}
+
+// App Use Type Step
+function AppUseTypeStep({ colors, data, updateData }: any) {
+  const options = [
+    {
+      value: 'personal' as const,
+      label: 'Personal Use',
+      description: 'For your own fitness journey',
+      icon: 'person.fill',
+      iconColor: BrandColors.accent,
+      backgroundColor: BrandColors.accent + '20',
+    },
+    {
+      value: 'team_institution' as const,
+      label: 'Team & Institution',
+      description: 'Coaches managing teams or institutions',
+      icon: 'sportscourt.fill',
+      iconColor: '#4FC3F7',
+      backgroundColor: '#4FC3F7' + '20',
+    },
+    {
+      value: 'gym_trainer' as const,
+      label: 'Gym / Personal Trainer',
+      description: 'Personal trainers and gyms managing clients',
+      icon: 'figure.strengthtraining.traditional',
+      iconColor: '#FF6B6B',
+      backgroundColor: '#FF6B6B' + '20',
+    },
+  ];
+
+  return (
+    <View style={styles.stepContainer}>
+      <View style={styles.genderHeader}>
+        <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+          <IconSymbol name="sparkles" size={32} color={BrandColors.accent} />
+        </View>
+        <Text style={[styles.genderTitle, { color: colors.text }]}>What are you using the app for?</Text>
+        <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+          Choose the option that best describes your use case
+        </Text>
+      </View>
+      
+      <View style={styles.genderOptionsContainer}>
+        {options.map((option) => {
+          const isSelected = data.appUseType === option.value;
+          return (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.genderOptionCard,
+                { 
+                  backgroundColor: isSelected ? option.backgroundColor : colors.background,
+                  borderColor: isSelected ? option.iconColor : colors.gray800,
+                  borderWidth: isSelected ? 3 : 1,
+                  opacity: option.value !== 'personal' ? 0.5 : 1,
+                }
+              ]}
+              onPress={() => {
+                // V1.0: Block team/institution/trainer - only personal use allowed
+                if (option.value !== 'personal') {
+                  checkFeatureOrShowComingSoon('teamManagement', 'Team & Institution Features');
+                    return;
+                }
+                updateData({ appUseType: option.value });
+              }}
+              activeOpacity={option.value !== 'personal' ? 1 : 0.7}
+              disabled={option.value !== 'personal'}
+            >
+              {option.value !== 'personal' && (
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background + 'CC', borderRadius: 12, alignItems: 'center', justifyContent: 'center', zIndex: 10 }]}>
+                  <IconSymbol name="lock.fill" size={24} color={colors.textSecondary} />
+                  <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: 12, fontWeight: '600' }}>Coming Soon</Text>
+                </View>
+              )}
+              <View style={[
+                styles.genderIconCircle,
+                {
+                  backgroundColor: isSelected 
+                    ? option.iconColor
+                    : option.backgroundColor,
+                }
+              ]}>
+                <IconSymbol 
+                  name={option.icon as any} 
+                  size={32} 
+                  color={isSelected ? '#fff' : option.iconColor} 
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[
+                  styles.genderOptionLabel,
+                  { 
+                    color: isSelected ? option.iconColor : colors.text,
+                    fontSize: Typography.fontSize.xl,
+                    marginBottom: 4,
+                  }
+                ]}>
+                  {option.label}
+                </Text>
+                <Text style={[
+                  styles.optionDescription,
+                  { 
+                    color: isSelected ? colors.text : colors.textSecondary,
+                    fontSize: Typography.fontSize.sm,
+                  }
+                ]}>
+                  {option.description}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// Subscription Tier Step
+function SubscriptionTierStep({ colors, data, updateData }: any) {
+  // V1.0: Force Basic tier only - disable Pro/Elite upgrades
+  // Auto-assign Basic tier if not already set
+  useEffect(() => {
+    if (!data.subscriptionTier || (data.subscriptionTier !== 'basic')) {
+      updateData({ subscriptionTier: 'basic' });
+    }
+  }, [data.subscriptionTier, updateData]);
+
+  const tiers = [
+    {
+      value: 'basic' as const,
+      label: 'Basic',
+      price: '$0/month',
+      description: 'AI features with Volts (earned through ads)',
+      features: [
+        'Track workouts & meals',
+        'Basic progress tracking',
+        'AI meal plans (5,000 V)',
+        'AI workout plans (6,000 V)',
+        'Watch ads to earn Volts',
+      ],
+      icon: 'star.fill',
+      iconColor: BrandColors.success,
+      backgroundColor: BrandColors.success + '20',
+    },
+    {
+      value: 'pro' as const,
+      label: 'Pro',
+      price: '$9.99/month',
+      description: 'Limited AI access per month',
+      features: [
+        'Everything in Basic',
+        '10 AI meal plans/month',
+        '50 AI macro estimations/month',
+        '10 AI workout plans/month',
+        'No ads',
+      ],
+      icon: 'sparkles',
+      iconColor: BrandColors.info,
+      backgroundColor: BrandColors.info + '20',
+    },
+    {
+      value: 'elite' as const,
+      label: 'Elite',
+      price: '$19.99/month',
+      description: 'Unlimited AI access + coach features',
+      features: [
+        'Everything in Pro',
+        'Unlimited AI features',
+        'Bulk team plan generation',
+        'Player progress summaries',
+        'AI coach alerts',
+      ],
+      icon: 'crown.fill',
+      iconColor: BrandColors.accent,
+      backgroundColor: BrandColors.accent + '20',
+    },
+  ];
+
+  return (
+    <ScrollView 
+      style={styles.tierScrollView}
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.tierScrollContent}
+    >
+      <View style={styles.stepContainer}>
+        <View style={styles.genderHeader}>
+          <View style={[styles.genderIconContainer, { backgroundColor: BrandColors.accent + '30' }]}>
+            <IconSymbol name="sparkles" size={32} color={BrandColors.accent} />
+          </View>
+          <Text style={[styles.genderTitle, { color: colors.text }]}>Choose your subscription tier</Text>
+          <Text style={[styles.genderSubtitle, { color: colors.textSecondary }]}>
+            Basic tier is available now. Pro and Elite tiers coming soon!
+              </Text>
+        </View>
+        
+        <View style={styles.tierCardsContainer}>
+          {tiers.map((tier) => {
+            const isSelected = data.subscriptionTier === tier.value;
+            // V1.0: Lock Pro and Elite tiers - only Basic is available
+            const isLocked = tier.value !== 'basic';
+            
+            return (
+              <TouchableOpacity
+                key={tier.value}
+                style={[
+                  styles.tierCard,
+                  { 
+                    backgroundColor: isSelected ? tier.backgroundColor : colors.background,
+                    borderColor: isSelected ? tier.iconColor : colors.gray800,
+                    borderWidth: isSelected ? 3 : 1,
+                    opacity: isLocked ? 0.5 : 1,
+                  }
+                ]}
+                onPress={() => {
+                  if (!isLocked) {
+                    updateData({ subscriptionTier: tier.value });
+                  } else {
+                    // Show "Coming Soon" alert for locked tiers
+                    checkFeatureOrShowComingSoon('subscriptionUpgrades', 'Subscription Upgrades');
+                  }
+                }}
+                activeOpacity={isLocked ? 1 : 0.7}
+                disabled={isLocked}
+              >
+                {isLocked && (
+                  <View style={[styles.lockedOverlay, { backgroundColor: colors.background + 'CC' }]}>
+                    <IconSymbol name="lock.fill" size={24} color={colors.textSecondary} />
+                    <Text style={[styles.lockedText, { color: colors.textSecondary }]}>
+                      Coming Soon
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.tierHeader}>
+                  <View style={[
+                    styles.tierIconContainer,
+                    {
+                      backgroundColor: isSelected 
+                        ? tier.iconColor
+                        : tier.backgroundColor,
+                    }
+                  ]}>
+                    <IconSymbol 
+                      name={tier.icon as any} 
+                      size={24} 
+                      color={isSelected ? '#fff' : tier.iconColor} 
+                    />
+                  </View>
+                  <View style={styles.tierTitleContainer}>
+                    <Text style={[
+                      styles.tierLabel,
+                      { 
+                        color: isSelected ? tier.iconColor : colors.text,
+                        fontSize: Typography.fontSize['2xl'],
+                      }
+                    ]}>
+                      {tier.label}
+                    </Text>
+                    <Text style={[
+                      styles.tierPrice,
+                      { 
+                        color: isSelected ? tier.iconColor : colors.textSecondary,
+                        fontSize: Typography.fontSize.lg,
+                      }
+                    ]}>
+                      {tier.price}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={[
+                  styles.tierDescription,
+                  { 
+                    color: colors.textSecondary,
+                    fontSize: Typography.fontSize.base,
+                    marginTop: Spacing.sm,
+                    marginBottom: Spacing.md,
+                  }
+                ]}>
+                  {tier.description}
+                </Text>
+                <View style={styles.tierFeaturesContainer}>
+                  {tier.features.map((feature, index) => (
+                    <View key={index} style={styles.tierFeatureRow}>
+                      <IconSymbol 
+                        name="checkmark.circle.fill" 
+                        size={16} 
+                        color={isSelected ? tier.iconColor : colors.textSecondary} 
+                      />
+                      <Text style={[
+                        styles.tierFeatureText,
+                        { 
+                          color: isSelected ? colors.text : colors.textSecondary,
+                          fontSize: Typography.fontSize.sm,
+                          marginLeft: Spacing.xs,
+                        }
+                      ]}>
+                        {feature}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -298,14 +616,15 @@ function HeightStep({ colors, data, updateData }: any) {
   const parseExistingHeight = () => {
     if (data.height?.value) {
       if (data.height.unit === 'ft/in') {
-        const match = data.height.value.match(/(\d+)ft\s*(\d+)in/);
+        // Match feet and inches, allowing decimals in inches (e.g., "5ft 11.5in")
+        const match = data.height.value.match(/(\d+)ft\s*([\d.]+)in/);
         if (match) {
-          return { feet: parseInt(match[1]), inches: parseInt(match[2]) };
+          return { feet: parseInt(match[1]), inches: match[2] };
         }
       } else if (data.height.unit === 'cm') {
-        const cmValue = parseInt(data.height.value);
+        const cmValue = parseFloat(data.height.value);
         if (!isNaN(cmValue)) {
-          return { cm: cmValue };
+          return { cm: cmValue.toString() };
         }
       }
     }
@@ -354,22 +673,32 @@ function HeightStep({ colors, data, updateData }: any) {
   };
 
   const handleInchesChange = (text: string) => {
-    // Allow only numbers
-    const cleanedText = text.replace(/[^0-9]/g, '');
-    const nextValue = cleanedText.slice(0, 2);
-    const numValue = parseInt(nextValue, 10);
+    // Allow numbers and one decimal point
+    const cleanedText = text.replace(/[^0-9.]/g, '');
+    const parts = cleanedText.split('.');
     
-    // Limit inches to 0-11 range
-    if (nextValue === '') {
+    // Only allow one decimal point
+    if (parts.length > 2) {
+      return;
+    }
+    
+    // Allow 1 decimal place for inches (e.g., 11.5)
+    if (parts[1] && parts[1].length > 1) {
+      return;
+    }
+    
+    // Limit to reasonable inches range (0-11.9)
+    if (cleanedText === '') {
       setInches('');
       updateData({ height: { value: '', unit: 'ft/in' } });
       cancelKeyboardDismiss();
       return;
     }
 
-    if (!Number.isNaN(numValue) && numValue >= 0 && numValue <= 11) {
-      setInches(nextValue);
-      updateData({ height: { value: `${feet}ft ${nextValue}in`, unit: 'ft/in' } });
+    const numValue = parseFloat(cleanedText);
+    if (!Number.isNaN(numValue) && numValue >= 0 && numValue < 12) {
+      setInches(cleanedText);
+      updateData({ height: { value: `${feet}ft ${cleanedText}in`, unit: 'ft/in' } });
 
       if (feet) {
         scheduleKeyboardDismiss();
@@ -378,32 +707,47 @@ function HeightStep({ colors, data, updateData }: any) {
   };
 
   const handleCmChange = (text: string) => {
-    // Allow only numbers
-    const cleanedText = text.replace(/[^0-9]/g, '');
-    const nextValue = cleanedText.slice(0, 3);
-    const numValue = parseInt(nextValue, 10);
+    // Allow numbers and one decimal point
+    const cleanedText = text.replace(/[^0-9.]/g, '');
+    const parts = cleanedText.split('.');
+    
+    // Only allow one decimal point
+    if (parts.length > 2) {
+      return;
+    }
+    
+    // Allow 1 decimal place for cm (e.g., 173.5)
+    if (parts[1] && parts[1].length > 1) {
+      return;
+    }
     
     // Limit cm to 100-250 range
-    if (nextValue === '') {
+    if (cleanedText === '') {
       setCm('');
       updateData({ height: { value: '', unit: 'cm' } });
       cancelKeyboardDismiss();
       return;
     }
 
+    const numValue = parseFloat(cleanedText);
     if (!Number.isNaN(numValue) && numValue >= 100 && numValue <= 250) {
-      setCm(nextValue);
-      updateData({ height: { value: nextValue, unit: 'cm' } });
+      setCm(cleanedText);
+      updateData({ height: { value: cleanedText, unit: 'cm' } });
       scheduleKeyboardDismiss();
     }
   };
 
-  const convertFtInToCm = (ft: number, inches: number) => Math.round((ft * 30.48) + (inches * 2.54));
+  const convertFtInToCm = (ft: number, inches: number) => {
+    const totalCm = (ft * 30.48) + (inches * 2.54);
+    return Math.round(totalCm * 10) / 10; // Round to 1 decimal place
+  };
   const convertCmToFtIn = (cm: number) => {
-    const totalInches = Math.round(cm / 2.54);
+    const totalInches = cm / 2.54;
     const feet = Math.floor(totalInches / 12);
     const inches = totalInches % 12;
-    return { feet, inches };
+    // Round inches to 1 decimal place
+    const roundedInches = Math.round(inches * 10) / 10;
+    return { feet, inches: roundedInches };
   };
 
   const switchUnit = () => {
@@ -411,7 +755,7 @@ function HeightStep({ colors, data, updateData }: any) {
 
     if (unit === 'ft/in') {
       const feetNum = parseInt(feet);
-      const inchesNum = parseInt(inches);
+      const inchesNum = parseFloat(inches || '0');
       if (!isNaN(feetNum) && !isNaN(inchesNum)) {
         const convertedCm = convertFtInToCm(feetNum, inchesNum);
         setCm(convertedCm.toString());
@@ -425,7 +769,7 @@ function HeightStep({ colors, data, updateData }: any) {
         updateData({ height: { value: '', unit: 'cm' } });
       }
     } else {
-      const cmNum = parseInt(cm);
+      const cmNum = parseFloat(cm);
       if (!isNaN(cmNum)) {
         const converted = convertCmToFtIn(cmNum);
         setFeet(converted.feet.toString());
@@ -611,7 +955,9 @@ function WeightStep({ colors, data, updateData }: any) {
   };
 
   const existingWeight = parseExistingWeight();
-  const [weightValue, setWeightValue] = useState<string>(existingWeight.value.toString());
+  const [weightValue, setWeightValue] = useState<string>(
+    existingWeight.value ? existingWeight.value.toString() : ''
+  );
 
   // Initialize data into store
   useEffect(() => {
@@ -629,8 +975,8 @@ function WeightStep({ colors, data, updateData }: any) {
       return;
     }
     
-    // Limit decimal places to 1 for kg, 0 for lb
-    if (parts[1] && parts[1].length > (unit === 'kg' ? 1 : 0)) {
+    // Allow 1 decimal place for both lb and kg
+    if (parts[1] && parts[1].length > 1) {
       return;
     }
     
@@ -799,7 +1145,7 @@ function SexStep({ colors, data, updateData }: any) {
                 }
               ]}>
                 <IconSymbol 
-                  name={option.icon} 
+                  name={option.icon as any} 
                   size={32} 
                   color={isSelected ? '#fff' : option.iconColor} 
                 />
@@ -888,7 +1234,7 @@ function ExperienceStep({ colors, data, updateData }: any) {
                 }
               ]}>
                 <IconSymbol 
-                  name={option.icon} 
+                  name={option.icon as any} 
                   size={32} 
                   color={isSelected ? '#fff' : option.iconColor} 
                 />
@@ -993,6 +1339,15 @@ function GoalStep({ colors, data, updateData }: any) {
   ];
 
   const selectedGoals: string[] = Array.isArray(data.goals) ? data.goals : [];
+  
+  // Debug log to verify goals are loaded
+  useEffect(() => {
+    if (data.goals && data.goals.length > 0) {
+      console.log('✅ GoalStep: Goals loaded:', data.goals);
+    } else {
+      console.log('⚠️ GoalStep: No goals found in data:', { goals: data.goals, primaryGoal: data.primaryGoal });
+    }
+  }, [data.goals]);
 
   const mapGoalToPrimary = (goal?: string) => {
     switch (goal) {
@@ -1086,18 +1441,18 @@ function GoalStep({ colors, data, updateData }: any) {
                   // Fire effect with layered colors (orange, yellow, red)
                   <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                     <View style={{ position: 'absolute' }}>
-                      <IconSymbol name={option.icon} size={32} color="#FFD700" />
+                      <IconSymbol name={option.icon as any} size={32} color="#FFD700" />
                     </View>
                     <View style={{ position: 'absolute' }}>
-                      <IconSymbol name={option.icon} size={28} color="#FF6B35" />
+                      <IconSymbol name={option.icon as any} size={28} color="#FF6B35" />
                     </View>
                     <View style={{ position: 'absolute' }}>
-                      <IconSymbol name={option.icon} size={24} color="#FF0000" />
+                      <IconSymbol name={option.icon as any} size={24} color="#FF0000" />
                     </View>
                   </View>
                 ) : (
                   <IconSymbol 
-                    name={option.icon} 
+                    name={option.icon as any} 
                     size={32} 
                     color={isSelected ? (option.value === 'general_health' ? '#DC143C' : (option.value === 'gain_strength' ? '#fff' : '#fff')) : option.iconColor} 
                   />
@@ -1215,7 +1570,7 @@ function EquipmentStep({ colors, data, updateData }: any) {
                 }
               ]}>
                 <IconSymbol 
-                  name={option.icon} 
+                  name={option.icon as any} 
                   size={32} 
                   color={isSelected ? '#fff' : option.iconColor} 
                 />
@@ -1400,7 +1755,7 @@ function SportsStep({ colors, data, updateData }: any) {
           onPress={() => handleSelect(true)}
         >
           <Text style={[
-            styles.optionTitle,
+            styles.optionButtonText,
             { color: colors.text },
             data.playsSports === true && { color: colors.accent }
           ]}>
@@ -1420,7 +1775,7 @@ function SportsStep({ colors, data, updateData }: any) {
           onPress={() => handleSelect(false)}
         >
           <Text style={[
-            styles.optionTitle,
+            styles.optionButtonText,
             { color: colors.text },
             data.playsSports === false && { color: colors.accent }
           ]}>
@@ -1512,7 +1867,7 @@ function TeamStep({ colors, data, updateData }: any) {
           onPress={() => handleSelect(true)}
         >
           <Text style={[
-            styles.optionTitle,
+            styles.optionButtonText,
             { color: colors.text },
             data.isOnTeam === true && { color: colors.accent }
           ]}>
@@ -1532,7 +1887,7 @@ function TeamStep({ colors, data, updateData }: any) {
           onPress={() => handleSelect(false)}
         >
           <Text style={[
-            styles.optionTitle,
+            styles.optionButtonText,
             { color: colors.text },
             data.isOnTeam === false && { color: colors.accent }
           ]}>
@@ -2010,6 +2365,104 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.sm,
     fontWeight: Typography.fontWeight.semibold,
     fontFamily: Typography.fontFamily,
+  },
+  // Tier selection styles
+  tierScrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  tierScrollContent: {
+    flexGrow: 1,
+    paddingBottom: Spacing.xl,
+  },
+  tierCardsContainer: {
+    width: '100%',
+    gap: Spacing.md,
+  },
+  tierCard: {
+    width: '100%',
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  tierHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  tierIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  tierTitleContainer: {
+    flex: 1,
+  },
+  tierLabel: {
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
+  },
+  tierPrice: {
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+    marginTop: 2,
+  },
+  tierDescription: {
+    fontFamily: Typography.fontFamily,
+    lineHeight: 20,
+  },
+  tierFeaturesContainer: {
+    marginTop: Spacing.sm,
+  },
+  tierFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  tierFeatureText: {
+    fontFamily: Typography.fontFamily,
+    flex: 1,
+    lineHeight: 20,
+  },
+  eliteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 2,
+    marginTop: Spacing.md,
+    gap: Spacing.xs,
+  },
+  eliteBadgeText: {
+    fontFamily: Typography.fontFamily,
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
+  },
+  lockedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: BorderRadius.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    zIndex: 10,
+  },
+  lockedText: {
+    fontFamily: Typography.fontFamily,
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
   },
 });
 

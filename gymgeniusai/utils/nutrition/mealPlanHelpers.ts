@@ -47,22 +47,38 @@ export const convertSharedFoodToFoodItem = (food: any, mealType: string, mealPla
   const servingSize = food.servingSize || '1 serving';
   const servingCount = food.servingCount || 1;
   
+  // Calculate macrosPerServing correctly
+  // If macrosPerServing exists, use it. Otherwise, calculate from totalMacros / servingCount
+  let macrosPerServing;
+  if (food.macrosPerServing) {
+    macrosPerServing = food.macrosPerServing;
+  } else if (food.totalMacros && servingCount > 0) {
+    // Calculate per-serving by dividing total by serving count
+    macrosPerServing = {
+      calories: (food.totalMacros.calories || 0) / servingCount,
+      protein: (food.totalMacros.protein || 0) / servingCount,
+      carbs: (food.totalMacros.carbs || 0) / servingCount,
+      fat: (food.totalMacros.fat || 0) / servingCount,
+    };
+  } else {
+    // Fallback to zeros if no macro data
+    macrosPerServing = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+  }
+  
+  // Calculate totalMacros from macrosPerServing * servingCount
+  const totalMacros = {
+    calories: macrosPerServing.calories * servingCount,
+    protein: macrosPerServing.protein * servingCount,
+    carbs: macrosPerServing.carbs * servingCount,
+    fat: macrosPerServing.fat * servingCount,
+  };
+  
   return {
     name: food.name || 'Unknown Food',
     servingSize: servingSize,
     servingCount: servingCount,
-    macrosPerServing: food.macrosPerServing || {
-      calories: food.totalMacros?.calories || 0,
-      protein: food.totalMacros?.protein || 0,
-      carbs: food.totalMacros?.carbs || 0,
-      fat: food.totalMacros?.fat || 0,
-    },
-    totalMacros: food.totalMacros || {
-      calories: (food.macrosPerServing?.calories || 0) * servingCount,
-      protein: (food.macrosPerServing?.protein || 0) * servingCount,
-      carbs: (food.macrosPerServing?.carbs || 0) * servingCount,
-      fat: (food.macrosPerServing?.fat || 0) * servingCount,
-    },
+    macrosPerServing: macrosPerServing,
+    totalMacros: totalMacros,
     mealType: mealType,
     loggedAt: mealPlanDate,
   };

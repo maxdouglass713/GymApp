@@ -11,9 +11,11 @@ import {
   FlatList,
   Image,
   TextInput,
+  ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { BrandColors, ComponentStyles } from '@/constants/theme';
+import { BrandColors, ComponentStyles, Spacing, Typography, BorderRadius } from '@/constants/theme';
 import { useWorkoutStore } from '@/stores/workoutStore';
 import { usePointsStore } from '@/stores/pointsStore';
 import { useProgressStore } from '@/stores/progressStore';
@@ -22,12 +24,20 @@ import { useAuth } from '@/components/AuthProvider';
 import { useUserStore } from '@/stores/userStore';
 import { useWeightStore } from '@/stores/weightStore';
 import { eventBus } from '@/lib/eventBus';
+import { AIProgressInsights } from '@/components/progress/AIProgressInsights';
+import { AIGoalRecalibration } from '@/components/progress/AIGoalRecalibration';
+import { usePlayerStats } from '@/hooks/useCommunity/usePlayerStats';
+import { OverviewTab } from '@/components/community/tabs/OverviewTab';
+import { router } from 'expo-router';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { generateProgressInsightsByRole } from '@/services/aiProgressService';
+import { isFeatureEnabled, checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
 const TAB_OPTIONS = [
   { key: 'history', label: 'History' },
   { key: 'weight', label: 'Weight' },
   { key: 'trends', label: 'Trends' },
-  { key: 'insights', label: 'Insights' },
 ];
 
 const TREND_PERIODS = [
@@ -36,7 +46,7 @@ const TREND_PERIODS = [
   { key: '52W', label: '52W' },
 ];
 
-const TAB_GUIDES: Record<'history' | 'weight' | 'trends' | 'insights', {
+const TAB_GUIDES: Record<'history' | 'weight' | 'trends', {
   title: string;
   summary: string;
   bullets: string[];
@@ -61,20 +71,11 @@ const TAB_GUIDES: Record<'history' | 'weight' | 'trends' | 'insights', {
   },
   trends: {
     title: 'Trends Breakdown',
-    summary: 'Shows where you’re gaining or slipping so you can dial in quality each week.',
+    summary: 'Shows where you\'re gaining or slipping so you can dial in quality each week.',
     bullets: [
       'Trend alerts signal meaningful changes—celebrate the green arrows and address the red.',
       'Compare latest vs previous workouts to confirm your ramp-up is manageable.',
       'Use the exercise timeline to plan which movement needs focus on technique or intent.'
-    ],
-  },
-  insights: {
-    title: 'Insights Deep Dive',
-    summary: 'Combines muscle group exposure with fatigue cues to guide smarter programming.',
-    bullets: [
-      'Volume insights call out the lowest-exposed areas—slot them earlier in the week when you’re fresh.',
-      'Under “Weak Points”, bring the flagged muscle into your primary day once or add back-off sets.',
-      'Fatigue warnings hint when recovery is lagging; adjust sleep, nutrition, or pull a set before form slips.'
     ],
   },
 };
@@ -87,6 +88,7 @@ export default function ProgressScreen() {
   const [weightRefreshKey, setWeightRefreshKey] = useState(0);
   const { totalPoints, isFeatureUnlocked, spendPoints, unlockFeature } = usePointsStore();
   const { addVideoAttachment, generateMockAnalysis } = useVideoStore();
+  const { tier } = useSubscriptionStore();
   const {
     selectedTab,
     selectedMonth,
@@ -98,7 +100,22 @@ export default function ProgressScreen() {
     calculateInsightsData,
     getStreakData,
     getMuscleGroups,
+    calculatePersonalRecords,
   } = useProgressStore();
+  
+  // Detect trainer vs coach
+  const isTrainer = profile?.appUseType === 'gym_trainer' && profile?.institutionRole !== 'player';
+  const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player' && !isTrainer;
+  const isCoachOrTrainer = isCoach || isTrainer;
+  
+  // Load player stats for coaches/trainers
+  const { playerStats, loadingOverview } = usePlayerStats(profile?.teamId, 'overview');
+  
+  // Use appropriate terminology
+  const memberLabel = isTrainer ? 'Clients' : 'Players';
+  const memberLabelSingular = isTrainer ? 'Client' : 'Player';
+  
+  const personalRecords = calculatePersonalRecords(workoutHistory);
 
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
@@ -110,7 +127,12 @@ export default function ProgressScreen() {
   const [selectedSet, setSelectedSet] = useState<any>(null);
   const [editableWorkout, setEditableWorkout] = useState<any>(null);
   const [selectedExerciseTrend, setSelectedExerciseTrend] = useState<string | null>(null);
-  const [guideTab, setGuideTab] = useState<'history' | 'weight' | 'trends' | 'insights' | null>(null);
+  const [guideTab, setGuideTab] = useState<'history' | 'weight' | 'trends' | null>(null);
+  const [showRoleBasedInsights, setShowRoleBasedInsights] = useState(false);
+  const [roleBasedInsights, setRoleBasedInsights] = useState<string | null>(null);
+  const [isGeneratingRoleInsights, setIsGeneratingRoleInsights] = useState(false);
+  const [showExerciseProgressionModal, setShowExerciseProgressionModal] = useState(false);
+  const [selectedExerciseForProgression, setSelectedExerciseForProgression] = useState<string | null>(null);
 
   const trendData = calculateTrendData(workoutHistory, selectedTrendPeriod);
   const insightsData = calculateInsightsData(workoutHistory);
@@ -125,6 +147,16 @@ export default function ProgressScreen() {
       .slice(0, 2)
       .toUpperCase();
   }, [profile?.firstName, user?.displayName, user?.email]);
+
+  // Sort weights by date (newest first) - must be at top level, not in renderWeightTab
+  const sortedWeights = useMemo(() => {
+    if (!dailyWeights || !Array.isArray(dailyWeights)) {
+      return [];
+    }
+    return [...dailyWeights].sort((a, b) => 
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+  }, [dailyWeights, weightRefreshKey]);
 
   const renderProfileSection = () => (
     <View style={[styles.profileSection, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.gray700 }]}>
@@ -156,41 +188,53 @@ export default function ProgressScreen() {
   );
 
 
-  // Load weights on mount
+  // Load weights on mount - but only if we don't have any local weights
   useEffect(() => {
     if (user?.uid) {
-      loadWeightsFromFirebase(user.uid).catch((error) => {
-        console.error('❌ Error loading weights:', error);
-      });
+      const currentWeights = useWeightStore.getState().dailyWeights;
+      
+      // Only load from Firebase if we don't have any local weights
+      if (currentWeights.length === 0) {
+        loadWeightsFromFirebase(user.uid).catch((error) => {
+          console.error('❌ Error loading weights:', error);
+        });
+      } else {
+      }
     }
   }, [user?.uid, loadWeightsFromFirebase]);
 
   // Listen for weight logged event - force component to re-render
   useEffect(() => {
     const unsubscribe = eventBus.subscribe('weightLogged', () => {
-      console.log('📊 Progress - weightLogged event, forcing re-render...');
       // Force a re-render by updating state
       setWeightRefreshKey(prev => prev + 1);
       // Also check store
       const currentWeights = useWeightStore.getState().dailyWeights;
-      console.log('📊 Progress - Current weights in store:', currentWeights);
-      console.log('📊 Progress - Current weights length:', currentWeights?.length || 0);
     });
     return () => unsubscribe();
   }, []);
 
-  // Refresh weights when progress tab comes into focus
+  // Refresh weights when progress tab comes into focus - but don't overwrite if we have local data
   useFocusEffect(
     React.useCallback(() => {
       if (user?.uid) {
-        loadWeightsFromFirebase(user.uid).catch((error) => {
-          console.error('❌ Error loading weights on focus:', error);
-        });
+        const currentWeights = useWeightStore.getState().dailyWeights;
+        
+        // Only load from Firebase if we don't have any local weights
+        // This prevents overwriting freshly logged weights
+        if (currentWeights.length === 0) {
+          loadWeightsFromFirebase(user.uid).then(() => {
+            const loadedWeights = useWeightStore.getState().dailyWeights;
+          }).catch((error) => {
+            console.error('❌ Error loading weights on focus:', error);
+          });
+        } else {
+        }
       }
     }, [user?.uid, loadWeightsFromFirebase])
   );
 
-  const renderGuideLink = (tabKey: 'history' | 'weight' | 'trends' | 'insights') => (
+  const renderGuideLink = (tabKey: 'history' | 'weight' | 'trends') => (
     <TouchableOpacity
       style={[styles.guideLink, { borderColor: BrandColors.textSecondary }]}
       activeOpacity={0.8}
@@ -215,12 +259,6 @@ export default function ProgressScreen() {
     }
   }, [trendData.exerciseProgress]);
 
-  const handleInsightsAccess = () => {
-    if (!isFeatureUnlocked('advanced_insights')) {
-      setShowUnlockModal(true);
-    }
-  };
-
   const handleUnlockInsights = async () => {
     const cost = 2000;
     if (totalPoints >= cost && user?.uid) {
@@ -232,6 +270,59 @@ export default function ProgressScreen() {
       }
     } else {
       Alert.alert('Insufficient Points', 'You need more GP to unlock this feature.');
+    }
+  };
+
+  const handleGenerateRoleBasedInsights = async () => {
+    // Check feature flag - show "Coming Soon" if AI is disabled
+    const { checkFeatureOrShowComingSoon } = require('@/utils/features/featureFlags');
+    if (!checkFeatureOrShowComingSoon('advancedAI', 'AI Progress Insights')) {
+      return;
+    }
+    // HIDDEN for v1.0 App Store submission - Tier checks removed
+    // if (tier !== 'elite') {
+    //   Alert.alert(
+    //     'Elite Feature',
+    //     'AI Progress Insights from your role perspective are only available for Elite tier users. Upgrade to unlock this feature.',
+    //     [{ text: 'OK' }]
+    //   );
+    //   return;
+    // }
+
+    setIsGeneratingRoleInsights(true);
+    setShowRoleBasedInsights(true);
+
+    try {
+      // Determine user role perspective
+      let rolePerspective: 'personal' | 'trainer' | 'coach';
+      if (isTrainer) {
+        rolePerspective = 'trainer';
+      } else if (isCoach) {
+        rolePerspective = 'coach';
+      } else {
+        rolePerspective = 'personal';
+      }
+
+      const insights = await generateProgressInsightsByRole(
+        rolePerspective,
+        trendData,
+        insightsData,
+        trendData.exerciseProgress,
+        personalRecords,
+        workoutHistory
+      );
+
+      setRoleBasedInsights(insights);
+    } catch (error: any) {
+      console.error('Error generating role-based insights:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to generate insights. Please try again.',
+        [{ text: 'OK' }]
+      );
+      setShowRoleBasedInsights(false);
+    } finally {
+      setIsGeneratingRoleInsights(false);
     }
   };
 
@@ -253,6 +344,11 @@ export default function ProgressScreen() {
   };
 
   const handleVideoUpload = () => {
+    // Check feature flag - show "Coming Soon" if disabled
+    if (!checkFeatureOrShowComingSoon('videoUpload', 'Video Upload')) {
+      return;
+    }
+    // TODO: Implement actual video upload when feature is enabled
     // Mock video upload - in real app would use camera/gallery
     Alert.alert('Video Upload', 'Video upload feature coming soon! This would open camera/gallery to record a set.');
     
@@ -287,23 +383,16 @@ export default function ProgressScreen() {
           style={[
             styles.tab,
             selectedTab === tab.key && { backgroundColor: BrandColors.accent },
-            tab.key === 'insights' && !isFeatureUnlocked('advanced_insights') && { opacity: 0.6 }
           ]}
           onPress={() => {
-            if (tab.key === 'insights') {
-              handleInsightsAccess();
-            } else {
-              setSelectedTab(tab.key as any);
-            }
+            setSelectedTab(tab.key as any);
           }}
         >
           <Text style={[
             styles.tabText,
             { color: selectedTab === tab.key ? '#000' : BrandColors.text },
-            tab.key === 'insights' && !isFeatureUnlocked('advanced_insights') && { color: BrandColors.textSecondary }
           ]}>
             {tab.label}
-            {tab.key === 'insights' && !isFeatureUnlocked('advanced_insights') && ' 🔒'}
           </Text>
         </TouchableOpacity>
       ))}
@@ -405,14 +494,6 @@ export default function ProgressScreen() {
   );
 
   const renderWeightTab = () => {
-    // Debug: Log what we're getting from the store
-    console.log('📊 ===== RENDER WEIGHT TAB =====');
-    console.log('📊 dailyWeights from store:', dailyWeights);
-    console.log('📊 dailyWeights type:', typeof dailyWeights);
-    console.log('📊 dailyWeights is array?', Array.isArray(dailyWeights));
-    console.log('📊 dailyWeights length:', dailyWeights?.length || 0);
-    console.log('📊 weightRefreshKey:', weightRefreshKey);
-    
     // Get user's weight goal based on primaryGoal
     const primaryGoal = profile?.primaryGoal || 'improve_fitness';
     const isLosingWeight = primaryGoal === 'lose_fat';
@@ -424,8 +505,6 @@ export default function ProgressScreen() {
           new Date(a.date).getTime() - new Date(b.date).getTime()
         )
       : [];
-    
-    console.log('📊 sortedWeightsForCalc:', sortedWeightsForCalc);
     
     // Get starting weight from profile or oldest logged weight
     const profileWeightValue = profile?.weight?.value;
@@ -445,14 +524,10 @@ export default function ProgressScreen() {
       startingWeight = sortedWeightsForCalc[0].weight;
     }
     
-    console.log('📊 startingWeight:', startingWeight);
-    
     // Get current weight (most recent)
     const currentWeight = sortedWeightsForCalc.length > 0 
       ? sortedWeightsForCalc[sortedWeightsForCalc.length - 1].weight
       : null;
-    
-    console.log('📊 currentWeight:', currentWeight);
     
     // Calculate weight change
     const weightChange = startingWeight && currentWeight 
@@ -470,25 +545,14 @@ export default function ProgressScreen() {
       ? (isLosingWeight && weightChange < 0) || (isGainingWeight && weightChange > 0) || (!isLosingWeight && !isGainingWeight)
       : null;
     
-    // Sort weights by date (newest first) - use useMemo with weightRefreshKey
-    const sortedWeights = useMemo(() => {
-      if (!dailyWeights || !Array.isArray(dailyWeights)) {
-        return [];
-      }
-      return [...dailyWeights].sort((a, b) => 
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-      );
-    }, [dailyWeights, weightRefreshKey]);
-    
-    console.log('📊 sortedWeights for display:', sortedWeights);
-    console.log('📊 sortedWeights length:', sortedWeights.length);
+    // Use sortedWeights from top-level useMemo
 
     return (
       <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
         {renderGuideLink('weight')}
         
         {/* Weight Progress Summary - Only show if we have weights */}
-        {dailyWeights.length > 0 && (
+        {(dailyWeights?.length || 0) > 0 && (
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Weight Progress</Text>
             <View style={[styles.weightProgressCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
@@ -554,7 +618,7 @@ export default function ProgressScreen() {
         {/* Daily Weight Entries - Always show this section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Daily Weight Log</Text>
-          {sortedWeights.length === 0 ? (
+          {!sortedWeights || sortedWeights.length === 0 ? (
             <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
               <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
                 No weight entries yet. Log your weight daily to track your progress!
@@ -718,6 +782,17 @@ export default function ProgressScreen() {
     return (
       <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
         {renderGuideLink('trends')}
+        
+        {/* AI Progress Insights */}
+        <View style={styles.section}>
+          <AIProgressInsights
+            trendData={trendData}
+            insightsData={insightsData}
+            exerciseProgress={trendData.exerciseProgress}
+            personalRecords={personalRecords}
+          />
+        </View>
+        
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Time Period</Text>
           <View style={styles.periodContainer}>
@@ -759,12 +834,17 @@ export default function ProgressScreen() {
               const previousSet = formatSetLabel(highlight.previous.topWeight, highlight.previous.topReps);
 
               return (
-                <View
+                <TouchableOpacity
                   key={`highlight-${index}`}
                   style={[
                     styles.highlightCard,
                     { backgroundColor: BrandColors.background, borderColor: highlight.direction === 'up' ? BrandColors.accent : '#8B0000' }
                   ]}
+                  onPress={() => {
+                    setSelectedExerciseForProgression(highlight.exercise);
+                    setShowExerciseProgressionModal(true);
+                  }}
+                  activeOpacity={0.7}
                 >
                   <View style={styles.highlightHeader}>
                     <Text style={[styles.highlightEmoji, { color: BrandColors.text }]}>{directionEmoji}</Text>
@@ -784,7 +864,7 @@ export default function ProgressScreen() {
                   <Text style={[styles.highlightSubtext, { color: BrandColors.textSecondary }]}>
                     {`Prev: ${previousSet} on ${formatDate(highlight.previous.date)}`}
                   </Text>
-                </View>
+                </TouchableOpacity>
               );
             })
           )}
@@ -955,163 +1035,6 @@ export default function ProgressScreen() {
     );
   };
 
-  const renderInsightsTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      {renderGuideLink('insights')}
-      {(() => {
-        const volumeGroups = trendData.volumeByMuscleGroup
-          .slice()
-          .sort((a, b) => a.percentage - b.percentage);
-        const lowVolume = volumeGroups.filter(group => group.percentage < 80);
-        const balancedVolume = volumeGroups.filter(group => group.percentage >= 80 && group.percentage <= 120);
-        const highVolume = volumeGroups.filter(group => group.percentage > 120);
-        const focusGroups = lowVolume.slice(0, 3);
-
-        const getVolumeSuggestion = (group: typeof volumeGroups[number]) => {
-          if (group.percentage < 80) {
-            return `Add 1-2 sets for ${group.muscleGroup} this week.`;
-          }
-          if (group.percentage > 120) {
-            return `Consider trimming a set to aid recovery.`;
-          }
-          return `Solid balance—keep this pace.`;
-        };
-
-        return (
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Volume Insights</Text>
-            {volumeGroups.length === 0 ? (
-              <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-                <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
-                  Complete a few strength sessions to unlock volume recommendations.
-                </Text>
-              </View>
-            ) : (
-              <>
-                <View style={styles.volumeSummaryRow}>
-                  <View style={[
-                    styles.volumeSummaryCard,
-                    { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }
-                  ]}>
-                    <Text style={[styles.volumeSummaryCount, { color: BrandColors.accent }]}>{lowVolume.length}</Text>
-                    <Text style={[styles.volumeSummaryLabel, { color: BrandColors.textSecondary }]}>Under Target</Text>
-                  </View>
-                  <View style={[
-                    styles.volumeSummaryCard,
-                    { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }
-                  ]}>
-                    <Text style={[styles.volumeSummaryCount, { color: BrandColors.text }]}>{balancedVolume.length}</Text>
-                    <Text style={[styles.volumeSummaryLabel, { color: BrandColors.textSecondary }]}>On Track</Text>
-                  </View>
-                  <View style={[
-                    styles.volumeSummaryCard,
-                    { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }
-                  ]}>
-                    <Text style={[styles.volumeSummaryCount, { color: '#FF8C00' }]}>{highVolume.length}</Text>
-                    <Text style={[styles.volumeSummaryLabel, { color: BrandColors.textSecondary }]}>High Volume</Text>
-                  </View>
-                </View>
-
-                {focusGroups.length > 0 ? (
-                  <View style={styles.volumeInsightList}>
-                    {focusGroups.map((group, index) => (
-                      <View
-                        key={`focus-${index}`}
-                        style={[
-                          styles.volumeInsightCard,
-                          { backgroundColor: BrandColors.background, borderColor: BrandColors.accent }
-                        ]}
-                      >
-                        <View style={styles.volumeInsightHeader}>
-                          <Text style={[styles.volumeInsightTitle, { color: BrandColors.text }]}>{group.muscleGroup}</Text>
-                          <Text style={[styles.volumeInsightPercent, { color: BrandColors.accent }]}>
-                            {group.percentage.toFixed(0)}%
-                          </Text>
-                        </View>
-                        <Text style={[styles.volumeInsightBody, { color: BrandColors.textSecondary }]}>
-                          {getVolumeSuggestion(group)}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-                    <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
-                      All muscle groups are meeting targets—keep up the balance!
-                    </Text>
-                  </View>
-                )}
-              </>
-            )}
-          </View>
-        );
-      })()}
-
-      {!isFeatureUnlocked('advanced_insights') ? (
-        <View style={[styles.lockedCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-          <Text style={[styles.lockedIcon, { color: BrandColors.textSecondary }]}>🔒</Text>
-          <Text style={[styles.lockedTitle, { color: BrandColors.text }]}>Advanced Insights</Text>
-          <Text style={[styles.lockedText, { color: BrandColors.textSecondary }]}>
-            Unlock advanced analytics including weak-point analysis, fatigue monitoring, and recovery insights.
-          </Text>
-          <Text style={[styles.lockedCost, { color: BrandColors.accent }]}>Cost: 2,000 GP</Text>
-          <TouchableOpacity
-            style={[styles.unlockButton, { backgroundColor: BrandColors.accent }]}
-            onPress={handleUnlockInsights}
-          >
-            <Text style={[styles.unlockButtonText, { color: '#000' }]}>Unlock with Points</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <>
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Weak Points</Text>
-            {insightsData.weakPoints.filter(wp => wp.isWeakPoint).length === 0 ? (
-              <View style={[styles.emptyState, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-                <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
-                  No weak points detected! All muscle groups are getting adequate volume.
-                </Text>
-              </View>
-            ) : (
-              insightsData.weakPoints
-                .filter(wp => wp.isWeakPoint)
-                .map((weakPoint, index) => (
-                  <View key={`weak-point-${weakPoint.muscleGroup}-${index}`} style={[styles.weakPointCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.accent }]}>
-                    <Text style={[styles.weakPointMuscleGroup, { color: BrandColors.text }]}>
-                      {weakPoint.muscleGroup}
-                    </Text>
-                    <Text style={[styles.weakPointPercentage, { color: BrandColors.accent }]}>
-                      {weakPoint.percentage.toFixed(0)}% of target
-                    </Text>
-                  </View>
-                ))
-            )}
-          </View>
-
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Fatigue Monitoring</Text>
-            <View style={[styles.fatigueCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-              <Text style={[styles.fatigueStatus, { color: insightsData.fatigueWarning.hasSpike ? BrandColors.accent : BrandColors.text }]}>
-                {insightsData.fatigueWarning.hasSpike ? '⚠️ Volume Spike Detected' : '✅ Volume Balanced'}
-              </Text>
-              <Text style={[styles.fatigueRecommendation, { color: BrandColors.textSecondary }]}>
-                {insightsData.fatigueWarning.recommendation}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>Recovery Hint</Text>
-            <View style={[styles.recoveryCard, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-              <Text style={[styles.recoveryText, { color: BrandColors.text }]}>
-                {insightsData.recoveryHint}
-              </Text>
-            </View>
-          </View>
-        </>
-      )}
-    </ScrollView>
-  );
 
   const renderSessionModal = () => (
     <Modal visible={showSessionModal} animationType="slide">
@@ -1130,13 +1053,13 @@ export default function ProgressScreen() {
             <Text style={[styles.sessionDate, { color: BrandColors.textSecondary }]}>
               {selectedWorkout && new Date(selectedWorkout.date).toLocaleDateString()}
             </Text>
-            <Text style={[styles.sessionStats, { color: BrandColors.textSecondary }]}>
+            <Text style={[styles.sessionStatsText, { color: BrandColors.textSecondary }]}>
               {selectedWorkout?.exercises?.length || 0} exercises • {selectedWorkout?.exercises?.reduce((total: number, ex: any) => total + (ex?.sets?.length || 0), 0) || 0} sets
             </Text>
           </View>
 
           {selectedWorkout?.exercises?.map((exercise: any, index: number) => (
-            <View key={`progress-exercise-${exercise?.id || index}-${selectedWorkout?.id}`} style={[styles.exerciseCard, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.textSecondary }]}>
+            <View key={`progress-exercise-${exercise?.id || 'ex-' + index}-${index}-${selectedWorkout?.id || 'workout'}`} style={[styles.exerciseCard, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.textSecondary }]}>
               <Text style={[styles.exerciseName, { color: BrandColors.text }]}>{exercise?.name || 'Unknown Exercise'}</Text>
               
               {exercise?.type === 'cardio' ? (
@@ -1160,10 +1083,10 @@ export default function ProgressScreen() {
                 </View>
               ) : (
                 <View style={styles.setsContainer}>
-                  {exercise?.sets?.map((set: any, index: number) => (
-                    <View key={`set-${set?.id || index}-${exercise?.id}`} style={styles.setRow}>
+                  {exercise?.sets?.map((set: any, setIndex: number) => (
+                    <View key={`set-${set?.id || 'set-' + setIndex}-${setIndex}-${exercise?.id || 'ex'}`} style={styles.setRow}>
                       <Text style={[styles.setNumber, { color: BrandColors.textSecondary }]}>
-                        Set {index + 1}
+                        Set {setIndex + 1}
                       </Text>
                       <Text style={[styles.setDetails, { color: BrandColors.text }]}>
                         {set?.weight || 0} × {set?.reps || 0}
@@ -1223,9 +1146,17 @@ export default function ProgressScreen() {
           
           <TouchableOpacity
             style={[ComponentStyles.button.primary, styles.modalButton]}
-            onPress={() => setShowAnalysisModal(false)}
+            onPress={() => {
+              if (!checkFeatureOrShowComingSoon('advancedInsights', 'Video Analysis')) {
+                setShowAnalysisModal(false);
+                return;
+              }
+              // TODO: Implement video analysis when feature is enabled
+              setShowAnalysisModal(false);
+            }}
           >
-            <Text style={[ComponentStyles.button.primaryText, { color: '#000' }]}>Coming Soon</Text>
+            {/* Hidden for v1.0 - Coming Soon text removed */}
+            {/* <Text style={[ComponentStyles.button.primaryText, { color: '#000' }]}>Coming Soon</Text> */}
           </TouchableOpacity>
         </View>
       </View>
@@ -1251,7 +1182,13 @@ export default function ProgressScreen() {
             
             <TouchableOpacity
               style={[styles.videoOption, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.textSecondary }]}
-              onPress={() => Alert.alert('Coming Soon', 'Gallery upload feature coming soon!')}
+              onPress={() => {
+                if (!checkFeatureOrShowComingSoon('videoUpload', 'Gallery Upload')) {
+                  return;
+                }
+                // TODO: Implement gallery upload when feature is enabled
+                Alert.alert('Gallery Upload', 'Gallery upload feature coming soon!');
+              }}
             >
               <Text style={[styles.videoOptionText, { color: BrandColors.text }]}>📁 Choose from Gallery</Text>
             </TouchableOpacity>
@@ -1293,6 +1230,180 @@ export default function ProgressScreen() {
               <Text style={[ComponentStyles.button.primaryText, { color: '#000' }]}>Got it</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderExerciseProgressionModal = () => {
+    if (!selectedExerciseForProgression) return null;
+    
+    const exerciseData = trendData.exerciseProgress.find(
+      (item) => item.exercise === selectedExerciseForProgression
+    );
+    
+    if (!exerciseData || exerciseData.sessions.length === 0) {
+      return (
+        <Modal
+          visible={showExerciseProgressionModal}
+          animationType="slide"
+          transparent
+          onRequestClose={() => {
+            setShowExerciseProgressionModal(false);
+            setSelectedExerciseForProgression(null);
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.guideModalContent, { backgroundColor: BrandColors.background }]}>
+              <Text style={[styles.guideModalTitle, { color: BrandColors.text }]}>
+                {selectedExerciseForProgression}
+              </Text>
+              <Text style={[styles.guideModalSummary, { color: BrandColors.textSecondary }]}>
+                No progression data available for this exercise yet.
+              </Text>
+              <TouchableOpacity
+                style={[ComponentStyles.button.primary, styles.guideModalButton]}
+                onPress={() => {
+                  setShowExerciseProgressionModal(false);
+                  setSelectedExerciseForProgression(null);
+                }}
+              >
+                <Text style={[ComponentStyles.button.primaryText, { color: '#000' }]}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      );
+    }
+
+    const formatDate = (date?: string) => {
+      if (!date) return 'Unknown date';
+      const parsed = new Date(date);
+      return Number.isNaN(parsed.getTime()) ? 'Unknown date' : parsed.toLocaleDateString();
+    };
+
+    const formatSetLabel = (weight: number | null, reps: number | null) => {
+      const safeWeight = weight ?? 0;
+      const safeReps = reps ?? 0;
+      if (safeWeight > 0 && safeReps > 0) {
+        return `${safeWeight} × ${safeReps}`;
+      }
+      if (safeWeight > 0) {
+        return `${safeWeight} lbs`;
+      }
+      if (safeReps > 0) {
+        return `${safeReps} reps`;
+      }
+      return 'No set data';
+    };
+
+    const formatDeltaNumber = (value: number, decimals = 1) => {
+      if (!Number.isFinite(value) || Math.abs(value) < 0.01) {
+        return '0';
+      }
+      const isWhole = Math.abs(value % 1) < 0.01;
+      const formatted = isWhole ? value.toFixed(0) : value.toFixed(decimals);
+      return `${value >= 0 ? '+' : ''}${formatted}`;
+    };
+
+    return (
+      <Modal
+        visible={showExerciseProgressionModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          setShowExerciseProgressionModal(false);
+          setSelectedExerciseForProgression(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={styles.modalOverlay}
+            onPress={() => {
+              setShowExerciseProgressionModal(false);
+              setSelectedExerciseForProgression(null);
+            }}
+          >
+            <Pressable
+              style={[styles.progressionModalContent, { backgroundColor: BrandColors.background }]}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: BrandColors.text }]}>
+                  {selectedExerciseForProgression} Progression
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowExerciseProgressionModal(false);
+                    setSelectedExerciseForProgression(null);
+                  }}
+                  style={styles.progressionCloseButton}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <IconSymbol name="xmark" size={20} color={BrandColors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.progressionScrollView} showsVerticalScrollIndicator={true}>
+                <Text style={[styles.progressionSubtitle, { color: BrandColors.textSecondary }]}>
+                  Your heaviest set progression over time
+                </Text>
+
+                {exerciseData.sessions.map((session, index) => {
+                  const previousSession = index > 0 ? exerciseData.sessions[index - 1] : null;
+                  const weightDelta = previousSession
+                    ? (session.topWeight ?? 0) - (previousSession.topWeight ?? 0)
+                    : 0;
+                  const repsDelta = previousSession
+                    ? (session.topReps ?? 0) - (previousSession.topReps ?? 0)
+                    : 0;
+
+                  return (
+                    <View
+                      key={`progression-${session.workoutId}-${index}`}
+                      style={[
+                        styles.progressionRow,
+                        { backgroundColor: BrandColors.gray800, borderColor: BrandColors.gray700 }
+                      ]}
+                    >
+                      <View style={styles.progressionLeft}>
+                        <Text style={[styles.progressionDate, { color: BrandColors.textSecondary }]}>
+                          {formatDate(session.date)}
+                        </Text>
+                        <Text style={[styles.progressionWorkoutTitle, { color: BrandColors.text }]}>
+                          {session.workoutTitle || 'Untitled Workout'}
+                        </Text>
+                      </View>
+                      <View style={styles.progressionRight}>
+                        <Text style={[styles.progressionSet, { color: BrandColors.accent }]}>
+                          {formatSetLabel(session.topWeight, session.topReps)}
+                        </Text>
+                        {previousSession && (weightDelta !== 0 || repsDelta !== 0) ? (
+                          <Text
+                            style={[
+                              styles.progressionDelta,
+                              {
+                                color:
+                                  weightDelta >= 0 || repsDelta >= 0 ? BrandColors.accent : '#8B0000'
+                              }
+                            ]}
+                          >
+                            {weightDelta !== 0 && `${formatDeltaNumber(weightDelta)} lbs`}
+                            {weightDelta !== 0 && repsDelta !== 0 && ' • '}
+                            {repsDelta !== 0 && `${formatDeltaNumber(repsDelta, 0)} reps`}
+                          </Text>
+                        ) : (
+                          <Text style={[styles.progressionDelta, { color: BrandColors.textSecondary }]}>
+                            First logged
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
         </View>
       </Modal>
     );
@@ -1350,7 +1461,20 @@ export default function ProgressScreen() {
             <View key={`edit-ex-${exercise.id}`} style={[styles.exerciseCard, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.textSecondary }]}> 
               <Text style={[styles.exerciseName, { color: BrandColors.text }]}>{exercise.name}</Text>
               {exercise.type === 'cardio' ? (
-                <Text style={[styles.cardioDetail, { color: BrandColors.textSecondary }]}>Cardio editing coming soon</Text>
+                <View>
+                  {/* Hidden for v1.0 - Cardio editing coming soon */}
+                  <Text style={[styles.cardioDetail, { color: BrandColors.textSecondary }]}>
+                    Cardio exercises are view-only in this version
+                  </Text>
+                  {/* <TouchableOpacity
+                    style={[ComponentStyles.button.secondary, { marginTop: 8 }]}
+                    onPress={() => checkFeatureOrShowComingSoon('cardioEditing', 'Cardio Editing')}
+                  >
+                    <Text style={[ComponentStyles.button.secondaryText, { color: BrandColors.accent }]}>
+                      Coming Soon
+                    </Text>
+                  </TouchableOpacity> */}
+                </View>
               ) : (
                 <View style={styles.setsContainer}>
                   {exercise.sets.map((s: any, idx: number) => (
@@ -1455,15 +1579,119 @@ export default function ProgressScreen() {
       case 'history': return renderHistoryTab();
       case 'weight': return renderWeightTab();
       case 'trends': return renderTrendsTab();
-      case 'insights': return renderInsightsTab();
       default: return renderHistoryTab();
     }
   };
+
+  // For coaches/trainers, show team/client progress instead of personal progress
+  if (isCoachOrTrainer && profile?.teamId) {
+    return (
+      <View style={[styles.container, styles.coachContainer, { backgroundColor: BrandColors.background }]}>
+        {/* Elite Tier - Role-Based AI Insights Button for Coaches/Trainers - HIDDEN for v1.0 */}
+        {false && tier === 'elite' && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }}>
+            <TouchableOpacity
+              style={[styles.roleInsightsButton, {
+                backgroundColor: BrandColors.accent + '15',
+                borderColor: BrandColors.accent,
+              }]}
+              onPress={handleGenerateRoleBasedInsights}
+              activeOpacity={0.7}
+              disabled={isGeneratingRoleInsights}
+            >
+              <IconSymbol name="sparkles" size={20} color={BrandColors.accent} />
+              <View style={styles.roleInsightsButtonContent}>
+                <Text style={[styles.roleInsightsButtonTitle, { color: BrandColors.text }]}>
+                  {isTrainer ? 'Generate Trainer/Client Insights' : 'Generate Coach/Player Insights'}
+                </Text>
+                <Text style={[styles.roleInsightsButtonSubtitle, { color: BrandColors.textSecondary }]}>
+                  AI-powered analysis from {isTrainer ? 'a trainer' : 'a coach'} perspective
+                </Text>
+              </View>
+              {isGeneratingRoleInsights ? (
+                <ActivityIndicator size="small" color={BrandColors.accent} />
+              ) : (
+                <IconSymbol name="chevron.right" size={20} color={BrandColors.accent} />
+              )}
+            </TouchableOpacity>
+
+            {/* Display Role-Based Insights */}
+            {showRoleBasedInsights && roleBasedInsights && (
+              <View style={[styles.roleInsightsContainer, {
+                backgroundColor: BrandColors.surface,
+                borderColor: BrandColors.accent,
+                marginTop: Spacing.md,
+              }]}>
+                <View style={styles.roleInsightsHeader}>
+                  <View style={[styles.roleInsightsIconContainer, {
+                    backgroundColor: BrandColors.accent + '20',
+                  }]}>
+                    <IconSymbol name="sparkles" size={18} color={BrandColors.accent} />
+                  </View>
+                  <Text style={[styles.roleInsightsTitle, { color: BrandColors.text }]}>
+                    {isTrainer ? 'Trainer/Client Insights' : 'Coach/Player Insights'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowRoleBasedInsights(false);
+                      setRoleBasedInsights(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <IconSymbol name="xmark" size={18} color={BrandColors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={styles.roleInsightsContent}>
+                  <Text style={[styles.roleInsightsText, { color: BrandColors.text }]}>
+                    {roleBasedInsights}
+                  </Text>
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+        
+        <OverviewTab
+          playerStats={playerStats}
+          loadingOverview={loadingOverview}
+          title={isTrainer ? 'Client Progress' : 'Team Progress'}
+          memberLabel={memberLabel}
+          emptyTitle={isTrainer ? `No clients yet` : `No players yet`}
+          emptyDescription={
+            isTrainer
+              ? `Clients will appear here once they join your training program.`
+              : `Players will appear here once they join your team.`
+          }
+          onSelectPlayer={(player) => {
+            // Navigate to team management to view individual player progress
+            router.push('/community/team-management');
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: BrandColors.background }]}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {renderProfileSection()}
+        
+        {/* AI Goal Recalibration */}
+        {profile && ((profile.goals && profile.goals.length > 0) || profile.primaryGoal) && workoutHistory && workoutHistory.length > 0 && (
+          <View style={{ paddingHorizontal: 16, marginBottom: Spacing.md }}>
+            <AIGoalRecalibration
+              userGoals={profile.goals && profile.goals.length > 0 
+                ? profile.goals 
+                : profile.primaryGoal 
+                  ? [profile.primaryGoal] 
+                  : []}
+              personalRecords={personalRecords}
+              trendData={trendData}
+              weightHistory={sortedWeights.map(w => ({ date: w.date, weight: w.weight }))}
+            />
+          </View>
+        )}
+        
         {renderTabs()}
         {renderTabContent()}
       </ScrollView>
@@ -1474,6 +1702,7 @@ export default function ProgressScreen() {
       {renderVideoModal()}
       {renderEditModal()}
       {renderGuideModal()}
+      {renderExerciseProgressionModal()}
     </View>
   );
 }
@@ -1481,6 +1710,9 @@ export default function ProgressScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  coachContainer: {
+    paddingTop: 100,
   },
   scrollView: {
     flex: 1,
@@ -2087,9 +2319,6 @@ const styles = StyleSheet.create({
   cancelButton: {
     borderWidth: 1,
   },
-  unlockButton: {
-    // backgroundColor set dynamically
-  },
   modalButtonText: {
     fontSize: 14,
     fontWeight: '600',
@@ -2117,9 +2346,36 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: BrandColors.gray800,
   },
-  sessionStats: {
+  sessionStatsText: {
     fontSize: 14,
     marginTop: 4,
+  },
+  // Edit workout modal styles
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    fontFamily: Typography.fontFamily,
+    minWidth: 60,
+    textAlign: 'center',
+  },
+  xSymbol: {
+    fontSize: 18,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+    marginHorizontal: 8,
+  },
+  addSetButton: {
+    marginTop: 12,
+  },
+  addExerciseButton: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  saveButton: {
+    marginTop: 16,
   },
   exerciseCard: {
     margin: 16,
@@ -2237,6 +2493,62 @@ const styles = StyleSheet.create({
   profileInfo: {
     flex: 1,
   },
+  roleInsightsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+    gap: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  roleInsightsButtonContent: {
+    flex: 1,
+  },
+  roleInsightsButtonTitle: {
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+    marginBottom: Spacing.xs / 2,
+  },
+  roleInsightsButtonSubtitle: {
+    fontSize: Typography.fontSize.sm,
+    fontFamily: Typography.fontFamily,
+  },
+  roleInsightsContainer: {
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+    maxHeight: 400,
+  },
+  roleInsightsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  roleInsightsIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roleInsightsTitle: {
+    flex: 1,
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
+  },
+  roleInsightsContent: {
+    maxHeight: 300,
+  },
+  roleInsightsText: {
+    fontSize: Typography.fontSize.sm,
+    fontFamily: Typography.fontFamily,
+    lineHeight: 22,
+  },
   profileName: {
     fontSize: 20,
     fontWeight: 'bold',
@@ -2332,6 +2644,61 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   weightEntryChange: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressionModalContent: {
+    borderRadius: 16,
+    padding: 0,
+    width: '85%',
+    maxWidth: 380,
+    maxHeight: '75%',
+    overflow: 'hidden',
+  },
+  progressionCloseButton: {
+    padding: 4,
+  },
+  progressionScrollView: {
+    maxHeight: 500,
+    padding: 16,
+  },
+  progressionSubtitle: {
+    fontSize: 14,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  progressionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  progressionLeft: {
+    flex: 1.2,
+  },
+  progressionRight: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  progressionDate: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  progressionWorkoutTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  progressionSet: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  progressionDelta: {
     fontSize: 12,
     fontWeight: '600',
   },

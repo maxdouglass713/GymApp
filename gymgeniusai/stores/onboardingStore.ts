@@ -43,6 +43,10 @@ export interface OnboardingData {
   teamInviteCode?: string; // Store invite code for players
   teamId?: string; // Store Firebase team ID
   
+  // App usage and subscription
+  appUseType?: 'personal' | 'team_institution' | 'gym_trainer';
+  subscriptionTier?: 'free' | 'basic' | 'pro' | 'elite';
+  
   // Optional fields
   injuries?: string;
   nutritionPreference?: 'simple_macros' | 'meal_ideas';
@@ -88,6 +92,8 @@ const initialData: OnboardingData = {
   communityUnlocked: false,
   teamInviteCode: undefined,
   teamId: undefined,
+  appUseType: undefined,
+  subscriptionTier: undefined,
   injuries: undefined,
   nutritionPreference: undefined,
 };
@@ -95,7 +101,7 @@ const initialData: OnboardingData = {
 export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
   data: initialData,
   currentStep: 0,
-  totalSteps: 9,
+  totalSteps: 10,
   hasRestored: false,
   
   updateData: (updates) => {
@@ -148,23 +154,25 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
     const { data } = get();
     
     switch (step) {
-      case 0: // Birthday (optional)
+      case 0: // Subscription tier
+        return data.subscriptionTier !== undefined;
+      case 1: // Birthday (optional)
         return true;
-      case 1: // Height
+      case 2: // Height
         return data.height.value.trim() !== '';
-      case 2: // Weight
+      case 3: // Weight
         return data.weight.value.trim() !== '';
-      case 3: // Sex (optional)
+      case 4: // Sex (optional)
         return true;
-      case 4: // Exercise experience
+      case 5: // Exercise experience
         return data.exerciseExperience !== undefined;
-      case 5: // Goals
+      case 6: // Goals
         return Array.isArray(data.goals) && data.goals.length > 0;
-      case 6: // Equipment
+      case 7: // Equipment
         return data.equipment !== undefined;
-      case 7: // Weekly schedule
+      case 8: // Weekly schedule
         return data.weeklySchedule !== undefined && data.weeklySchedule > 0;
-      case 8: // Injuries (optional)
+      case 9: // Injuries (optional)
         return true;
       default:
         return false;

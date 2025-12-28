@@ -12,6 +12,7 @@ const STORAGE_KEYS = {
   FAVORITES: 'favorites',
   COMMUNITY_DATA: 'community_data',
   ONBOARDING_PROGRESS: 'onboarding_progress',
+  CUSTOM_MEALS: 'custom_meals',
 } as const;
 
 export interface PendingSync {
@@ -81,6 +82,26 @@ class PersistenceService {
 
   async loadCustomExercises(): Promise<any[] | null> {
     return await this.load<any[]>(STORAGE_KEYS.CUSTOM_EXERCISES);
+  }
+
+  async saveCustomMeals(meals: any[], userId: string): Promise<void> {
+    if (!userId) {
+      console.warn('No user ID provided for saving custom meals');
+      return;
+    }
+    // Save meals with user-specific key
+    const userKey = `${STORAGE_KEYS.CUSTOM_MEALS}_${userId}`;
+    await this.save(userKey, meals);
+  }
+
+  async loadCustomMeals(userId: string): Promise<any[] | null> {
+    if (!userId) {
+      console.warn('No user ID provided for loading custom meals');
+      return null;
+    }
+    // Load meals with user-specific key
+    const userKey = `${STORAGE_KEYS.CUSTOM_MEALS}_${userId}`;
+    return await this.load<any[]>(userKey);
   }
 
   // Nutrition-specific methods

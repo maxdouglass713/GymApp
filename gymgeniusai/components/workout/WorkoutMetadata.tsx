@@ -33,6 +33,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     fontSize: 16,
+    textAlign: 'center', // Center the text
+    fontWeight: 'bold', // Make typed text bold
   },
 });
 

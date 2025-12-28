@@ -10,9 +10,11 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { BrandColors, Typography, Spacing, ComponentStyles } from '@/constants/theme';
 import { usePointsStore } from '@/stores/pointsStore';
 import { useCommunityStore } from '@/stores/communityStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import type { FeedEntry } from '@/stores/communityStore';
 import { useAuth } from '@/components/AuthProvider';
 import { useUserStore } from '@/stores/userStore';
@@ -31,11 +33,25 @@ import { ChallengesTab } from '@/components/community/tabs/ChallengesTab';
 import { FeedTab } from '@/components/community/tabs/FeedTab';
 import { ChatTab } from '@/components/community/tabs/ChatTab';
 import { InboxTab } from '@/components/community/tabs/InboxTab';
+import { checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
 export default function CommunityScreen() {
   const { isFeatureUnlocked } = usePointsStore();
   const { user } = useAuth();
   const { profile } = useUserStore();
+  
+  // Check feature flag - show "Coming Soon" if community is disabled
+  // Use useFocusEffect so it runs every time the screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!checkFeatureOrShowComingSoon('communityChallenges', 'Community Features')) {
+        // Navigate back after showing alert
+        setTimeout(() => {
+          router.back();
+        }, 500);
+      }
+    }, [])
+  );
   const params = useLocalSearchParams();
   const {
     communities,
@@ -55,10 +71,12 @@ export default function CommunityScreen() {
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   
   // Determine initial tab based on user role
-  const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player';
+  const isTrainer = profile?.appUseType === 'gym_trainer' && profile?.institutionRole !== 'player';
+  const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player' && !isTrainer;
+  const isCoachOrTrainer = isCoach || isTrainer;
   const isPlayer = profile?.userType === 'institution' && profile?.institutionRole === 'player';
-  const initialTab = isCoach ? 'overview' : 'leaderboard';
-  const [activeTab, setActiveTab] = useState<'overview' | 'challenges' | 'chat' | 'inbox' | 'leaderboard' | 'feed'>(initialTab);
+  const initialTab = isCoachOrTrainer ? 'overview' : 'leaderboard';
+  const [activeTab, setActiveTab] = useState<'overview' | 'challenges' | 'inbox' | 'leaderboard' | 'feed' | 'chat'>(initialTab);
   const [showCreateChallengeModal, setShowCreateChallengeModal] = useState(false);
   const [challengeTitle, setChallengeTitle] = useState('');
   const [challengeDescription, setChallengeDescription] = useState('');
@@ -72,6 +90,13 @@ export default function CommunityScreen() {
       setActiveTab('leaderboard');
     }
   }, [isPlayer, activeTab]);
+
+  // Ensure trainers can access overview tab
+  React.useEffect(() => {
+    if (isTrainer && activeTab !== 'overview') {
+      setActiveTab('overview');
+    }
+  }, [isTrainer, activeTab]);
 
   // Custom hooks for data management
   const { firebaseTeamData } = useCommunityData();
@@ -90,35 +115,41 @@ export default function CommunityScreen() {
   React.useEffect(() => {
     if (!profile || !user?.uid) return;
     
-    const isCoach = profile?.userType === 'institution' && 
+    const isCoachCheck = profile?.userType === 'institution' && 
                     profile?.institutionName && 
-                    profile?.institutionRole !== 'player';
+                    profile?.institutionRole !== 'player' &&
+                    profile?.appUseType !== 'gym_trainer';
+    const isTrainerCheck = profile?.appUseType === 'gym_trainer' && profile?.institutionRole !== 'player';
     
     const cameFromTeamManagement = params.fromTeamManagement === 'true';
     
-    if (isCoach && !cameFromTeamManagement) {
+    if (isCoachCheck && !cameFromTeamManagement) {
       console.log('👨‍💼 Coach detected - auto-navigating to team-management');
       const timer = setTimeout(() => {
         router.replace('/community/team-management');
       }, 200);
       return () => clearTimeout(timer);
-    } else if (isCoach && cameFromTeamManagement) {
+    } else if (isCoachCheck && cameFromTeamManagement) {
       console.log('👨‍💼 Coach returned from team-management - showing quick actions on community tab');
+    } else if (isTrainerCheck) {
+      console.log('💪 Trainer detected - showing client overview');
     }
-  }, [profile?.userType, profile?.institutionRole, profile?.institutionName, user?.uid, params.fromTeamManagement]);
+  }, [profile?.userType, profile?.institutionRole, profile?.institutionName, profile?.appUseType, user?.uid, params.fromTeamManagement]);
 
   const activeCommunity = communities.find(c => c.id === activeCommunityId);
   const isSportsCommunity = activeCommunity?.type === 'sports';
+  // Only coaches/trainers can be community leaders (not players/clients)
   const isCommunityLeader = Boolean(
     activeCommunity &&
     user?.uid &&
+    isCoachOrTrainer && // Must be a coach or trainer, not a player
     (
       activeCommunity.ownerId === user.uid ||
-      (isSportsCommunity && (activeCommunity.role === 'coach' || isCoach || (!activeCommunity.ownerId && isCoach)))
+      (isSportsCommunity && (activeCommunity.role === 'coach' || isCoachOrTrainer || (!activeCommunity.ownerId && isCoachOrTrainer)))
     )
   );
   const showFeedTab = !isSportsCommunity;
-  const showChatTab = isSportsCommunity;
+  const showChatTab = false; // Removed chat tab for teams/institutions
   const showInboxTab = isSportsCommunity && activeCommunity?.type === 'sports' && (
     activeCommunity?.role === 'player' || (profile?.userType === 'institution' && profile?.institutionRole === 'player')
   );
@@ -168,9 +199,18 @@ export default function CommunityScreen() {
         playerStats.map((stat) => [stat.playerId, stat])
       );
 
-      const playerMembers = firebaseTeamData.members.filter(
-        (member: any) => member.role !== 'coach'
-      );
+      // Deduplicate members by userId to prevent duplicate keys
+      const uniqueMembers = new Map<string, any>();
+      firebaseTeamData.members.forEach((member: any) => {
+        if (member.role !== 'coach' && member.userId) {
+          // Keep the first occurrence of each userId
+          if (!uniqueMembers.has(member.userId)) {
+            uniqueMembers.set(member.userId, member);
+          }
+        }
+      });
+
+      const playerMembers = Array.from(uniqueMembers.values());
 
       const entries: Array<{
         id: string;
@@ -283,10 +323,15 @@ export default function CommunityScreen() {
     }
   }, [isSportsCommunity, activeCommunity?.id, loadCommunityChallenges]);
   
+  // Import subscription store to check tier
+  const { tier } = useSubscriptionStore();
+  
   // Check if community is unlocked
+  // Pro and Elite tiers automatically unlock community features
   const isCommunityUnlocked = isFeatureUnlocked('community_challenges') || 
     (profile?.communityUnlocked === true) || 
-    (profile?.userType === 'institution');
+    (profile?.userType === 'institution') ||
+    (tier === 'pro' || tier === 'elite');
   
   const handleJoinCommunity = () => {
     if (!isCommunityUnlocked) {
@@ -342,7 +387,7 @@ export default function CommunityScreen() {
     }
 
     try {
-      const shareMessage = `Join my ${activeCommunity.type === 'sports' ? 'team' : 'community'} "${activeCommunity.name}" on Gym Genius AI!\n\nUse invite code: ${activeCommunity.inviteCode}`;
+      const shareMessage = `Join my ${activeCommunity.type === 'sports' ? 'team' : 'community'} "${activeCommunity.name}" on KINETIC FLOW AI!\n\nUse invite code: ${activeCommunity.inviteCode}`;
       await Share.share({
         title: `Join ${activeCommunity.name}`,
         message: shareMessage,
@@ -541,11 +586,81 @@ export default function CommunityScreen() {
               onLeaveCommunity={handleLeaveCommunity}
             />
 
+            {/* Tabs moved up for better visibility */}
+            {isSportsCommunity && (
+              <View style={styles.tabContainer}>
+                {(isCoachOrTrainer || isCommunityLeader) && (
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton,
+                      activeTab === 'overview' && styles.activeTabButton,
+                      { backgroundColor: activeTab === 'overview' ? BrandColors.accent : 'transparent' }
+                    ]}
+                    onPress={() => setActiveTab('overview')}
+                  >
+                    <IconSymbol 
+                      name="chart.bar.fill" 
+                      size={18} 
+                      color={activeTab === 'overview' ? '#FFFFFF' : BrandColors.textSecondary} 
+                    />
+                    <Text style={[
+                      styles.tabText,
+                      { color: activeTab === 'overview' ? '#FFFFFF' : BrandColors.textSecondary }
+                    ]}>
+                      Overview
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[
+                    styles.tabButton,
+                    activeTab === 'leaderboard' && styles.activeTabButton,
+                    { backgroundColor: activeTab === 'leaderboard' ? BrandColors.accent : 'transparent' }
+                  ]}
+                  onPress={() => setActiveTab('leaderboard')}
+                >
+                  <IconSymbol 
+                    name="chart.bar.fill" 
+                    size={18} 
+                    color={activeTab === 'leaderboard' ? '#FFFFFF' : BrandColors.textSecondary} 
+                  />
+                  <Text style={[
+                    styles.tabText,
+                    { color: activeTab === 'leaderboard' ? '#FFFFFF' : BrandColors.textSecondary }
+                  ]}>
+                    Leaderboard
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.tabButton,
+                    activeTab === 'challenges' && styles.activeTabButton,
+                    { backgroundColor: activeTab === 'challenges' ? BrandColors.accent : 'transparent' }
+                  ]}
+                  onPress={() => setActiveTab('challenges')}
+                >
+                  <IconSymbol 
+                    name="trophy.fill" 
+                    size={18} 
+                    color={activeTab === 'challenges' ? '#FFFFFF' : BrandColors.textSecondary} 
+                  />
+                  <Text style={[
+                    styles.tabText,
+                    { color: activeTab === 'challenges' ? '#FFFFFF' : BrandColors.textSecondary }
+                  ]}>
+                    Challenges
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
           {isSportsCommunity ? (
             isCommunityLeader ? (
               <View style={styles.teamManagementSection}>
                 <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>
-                  Team Management
+                  {isTrainer ? 'Client Management' : 'Team Management'}
                 </Text>
                 <View style={styles.teamActionGrid}>
                       <TouchableOpacity 
@@ -554,19 +669,9 @@ export default function CommunityScreen() {
                       >
                         <IconSymbol name="person.badge.plus" size={24} color={BrandColors.accent} />
                         <Text style={[styles.teamActionText, { color: BrandColors.text }]}>
-                          Manage Team
+                          {isTrainer ? 'Manage Clients' : 'Manage Team'}
                         </Text>
                       </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.teamActionCard}
-                    onPress={() => setActiveTab('leaderboard')}
-                  >
-                    <IconSymbol name="chart.bar.fill" size={24} color={BrandColors.accent} />
-                    <Text style={[styles.teamActionText, { color: BrandColors.text }]}>
-                      View Leaderboard
-                    </Text>
-                  </TouchableOpacity>
                       
                       <TouchableOpacity 
                         style={styles.teamActionCard}
@@ -604,16 +709,6 @@ export default function CommunityScreen() {
                           View Progress
                         </Text>
                       </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.teamActionCard}
-                    onPress={() => setActiveTab('leaderboard')}
-                  >
-                    <IconSymbol name="chart.bar.fill" size={24} color={BrandColors.accent} />
-                    <Text style={[styles.teamActionText, { color: BrandColors.text }]}>
-                      View Leaderboard
-                    </Text>
-                  </TouchableOpacity>
                       
                       <TouchableOpacity 
                         style={styles.teamActionCard}
@@ -678,7 +773,8 @@ export default function CommunityScreen() {
             )
           )}
 
-            <View style={styles.tabContainer}>
+            {!isSportsCommunity && (
+              <View style={styles.tabContainer}>
             {(isCoach || isCommunityLeader) && (
                 <TouchableOpacity
                   style={[
@@ -813,8 +909,9 @@ export default function CommunityScreen() {
                 </TouchableOpacity>
               )}
             </View>
-        </View>
-      )}
+            )}
+          </View>
+        )}
     </View>
   );
 
@@ -823,16 +920,18 @@ export default function CommunityScreen() {
       return null;
     }
 
-    if (activeTab === 'overview' && (isCoach || isCommunityLeader || showFeedTab)) {
+    if (activeTab === 'overview' && (isCoachOrTrainer || isCommunityLeader || showFeedTab)) {
       return (
               <OverviewTab
           playerStats={overviewStats}
                 loadingOverview={loadingOverview}
-          title={isSportsCommunity ? 'Team Overview' : 'Friends Overview'}
-          memberLabel={isSportsCommunity ? 'Players' : 'Friends'}
-          emptyTitle={isSportsCommunity ? 'No players yet' : 'No friends yet'}
+          title={isTrainer ? 'Client Overview' : (isSportsCommunity ? 'Team Overview' : 'Friends Overview')}
+          memberLabel={isTrainer ? 'Clients' : (isSportsCommunity ? 'Players' : 'Friends')}
+          emptyTitle={isTrainer ? 'No clients yet' : (isSportsCommunity ? 'No players yet' : 'No friends yet')}
           emptyDescription={
-            isSportsCommunity
+            isTrainer
+              ? 'Clients will appear here once they join your training program.'
+              : isSportsCommunity
               ? 'Players will appear here once they join your team.'
               : 'Invite friends to your community to see them here.'
           }
@@ -1222,27 +1321,35 @@ const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: BrandColors.gray800,
-    borderRadius: 12,
-    padding: 4,
+    borderRadius: 16,
+    padding: 6,
     marginBottom: 20,
+    marginTop: 8,
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   tabButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     gap: 8,
+    minHeight: 44,
   },
   activeTabButton: {
     // Active state handled by backgroundColor in component
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     fontFamily: 'ui-rounded',
+    letterSpacing: 0.3,
   },
   teamManagementSection: {
     marginBottom: 24,

@@ -19,6 +19,7 @@ import { TeamDocument } from '@/types/firestore';
 import { workoutSharingService, SharedWorkout } from '@/services/workoutSharingService';
 import { mealPlanSharingService, SharedMealPlan } from '@/services/mealPlanSharingService';
 import { useWorkoutStore } from '@/stores/workoutStore';
+import { checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
 // Global variable declarations for workout sharing
 declare global {
@@ -689,8 +690,21 @@ export default function TeamDashboardScreen() {
       </Text>
       
       {/* Show coach */}
-      {teamData.members?.filter(m => m.role === 'coach' || m.role === 'admin').map((member) => (
-        <View key={member.userId} style={styles.memberCard}>
+      {(() => {
+        // Deduplicate members by userId to prevent duplicate keys
+        const uniqueMembers = new Map<string, any>();
+        (teamData.members || []).forEach((member) => {
+          if ((member.role === 'coach' || member.role === 'admin') && member.userId) {
+            if (!uniqueMembers.has(member.userId)) {
+              uniqueMembers.set(member.userId, member);
+            }
+          }
+        });
+        return Array.from(uniqueMembers.values());
+      })().map((member, index) => {
+        const memberKey = member.userId || `${member.name || 'coach'}-${index}`;
+        return (
+        <View key={memberKey} style={styles.memberCard}>
           <View style={styles.memberInfo}>
             <View style={styles.memberAvatar}>
               <Text style={[styles.memberInitial, { color: BrandColors.text }]}>
@@ -708,12 +722,37 @@ export default function TeamDashboardScreen() {
           </View>
           <IconSymbol name="crown.fill" size={20} color="#f59e0b" />
         </View>
-      ))}
+      );
+      })}
       
       {/* Show players */}
-      {teamData.members?.filter(m => m.role === 'player').length > 0 ? (
-        teamData.members.filter(m => m.role === 'player').map((member) => (
-          <View key={member.userId} style={styles.memberCard}>
+      {(() => {
+        // Deduplicate members by userId to prevent duplicate keys
+        const uniqueMembers = new Map<string, any>();
+        (teamData.members || []).forEach((member) => {
+          if (member.role === 'player' && member.userId) {
+            if (!uniqueMembers.has(member.userId)) {
+              uniqueMembers.set(member.userId, member);
+            }
+          }
+        });
+        return Array.from(uniqueMembers.values());
+      })().length > 0 ? (
+        (() => {
+          // Deduplicate members by userId
+          const uniqueMembers = new Map<string, any>();
+          (teamData.members || []).forEach((member) => {
+            if (member.role === 'player' && member.userId) {
+              if (!uniqueMembers.has(member.userId)) {
+                uniqueMembers.set(member.userId, member);
+              }
+            }
+          });
+          return Array.from(uniqueMembers.values());
+        })().map((member, index) => {
+          const memberKey = member.userId || `${member.name || 'player'}-${index}`;
+          return (
+          <View key={memberKey} style={styles.memberCard}>
             <View style={styles.memberInfo}>
               <View style={styles.memberAvatar}>
                 <Text style={[styles.memberInitial, { color: BrandColors.text }]}>
@@ -740,7 +779,8 @@ export default function TeamDashboardScreen() {
               </Text>
             </View>
           </View>
-        ))
+        );
+        })
       ) : (
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyText, { color: BrandColors.textSecondary }]}>
@@ -812,9 +852,14 @@ export default function TeamDashboardScreen() {
             <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>
               Team Chat
             </Text>
-            <Text style={[styles.comingSoon, { color: BrandColors.textSecondary }]}>
-              Team chat feature coming soon!
-            </Text>
+            <TouchableOpacity
+              onPress={() => checkFeatureOrShowComingSoon('teamChat', 'Team Chat')}
+              style={{ padding: 8 }}
+            >
+              <Text style={[styles.comingSoon, { color: BrandColors.textSecondary }]}>
+                Team chat feature coming soon! (Tap for details)
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
       </ScrollView>

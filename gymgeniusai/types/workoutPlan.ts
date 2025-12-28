@@ -50,6 +50,25 @@ export interface WorkoutPlanGenerationRequest {
   equipment: string; // e.g., "full_gym", "home_basic", "bodyweight"
   weeklySchedule: number; // Days per week they workout
   injuries?: string;
+  targetMuscleGroups?: string[]; // e.g., ["Chest", "Triceps", "Shoulders"]
+  pastWorkouts?: PastWorkoutData[]; // Historical workout data for personalized sets/reps
+  assignedClientId?: string;
+  assignedClientName?: string;
+  coachNotes?: string;
+  customFocus?: string;
+  sessionLength?: string;
+  trainingSplit?: string; // e.g., "push_pull_legs", "upper_lower", "full_body", "body_part_split"
+  areasOfImprovement?: string[]; // e.g., ["Upper Chest", "Hamstrings", "Core Stability"]
+}
+
+export interface PastWorkoutData {
+  exerciseName: string;
+  muscleGroup?: string;
+  sets: number;
+  reps: string | number;
+  weight?: number;
+  date: string;
+  completed: boolean;
 }
 
 

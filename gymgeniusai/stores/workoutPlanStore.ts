@@ -29,7 +29,7 @@ interface WorkoutPlanStore {
   getLatestBatch: () => WorkoutBatch | undefined;
 }
 
-const WORKOUT_PLANS_STORAGE_KEY = '@gym_genius_workout_plans';
+const WORKOUT_PLANS_STORAGE_KEY = '@kinetic_flow_workout_plans';
 
 export const useWorkoutPlanStore = create<WorkoutPlanStore>((set, get) => ({
   // Initial State
@@ -102,8 +102,16 @@ export const loadWorkoutPlansFromStorage = async () => {
     const stored = await AsyncStorage.getItem(WORKOUT_PLANS_STORAGE_KEY);
     if (stored) {
       const batches = JSON.parse(stored);
-      useWorkoutPlanStore.setState({ workoutBatches: batches });
+      // Restore batches and set the latest one as current batch
+      const latestBatch = batches.length > 0 ? batches[0] : null;
+      useWorkoutPlanStore.setState({ 
+        workoutBatches: batches,
+        currentBatch: latestBatch 
+      });
       console.log('📱 Loaded workout plans from local storage:', batches.length);
+      if (latestBatch) {
+        console.log('📱 Restored current batch:', latestBatch.id);
+      }
     }
   } catch (error) {
     console.error('❌ Error loading workout plans from storage:', error);

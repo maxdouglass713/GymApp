@@ -32,12 +32,47 @@ import { useProgressStore } from '@/stores/progressStore';
 import { Workout } from '@/stores/workoutStore';
 import { DatePickerModal } from '@/components/shared/DatePickerModal';
 import { useWorkoutStore } from '@/stores/workoutStore';
+import { checkFeatureOrShowComingSoon } from '@/utils/features/featureFlags';
 
 export default function TeamManagementScreen() {
   const { communities, activeCommunityId } = useCommunityStore();
   const { profile, fetchUserDoc } = useUserStore();
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'assignments' | 'chat'>('overview');
+  
+  const isTrainer = profile?.appUseType === 'gym_trainer' && profile?.institutionRole !== 'player';
+  const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player' && !isTrainer;
+  const isPlayer = profile?.userType === 'institution' && profile?.institutionRole === 'player';
+  const isTrainerClient = profile?.appUseType === 'gym_trainer' && profile?.institutionRole === 'player';
+  const isClient = isPlayer || isTrainerClient;
+  
+  // Redirect clients/players away from team management
+  React.useEffect(() => {
+    if (isClient) {
+      Alert.alert(
+        'Access Restricted',
+        'Team management is only available for coaches and trainers.',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.back()
+          }
+        ]
+      );
+    }
+  }, [isClient]);
+  
+  // Don't render anything if user is a client/player
+  if (isClient) {
+    return null;
+  }
+  
+  // Use appropriate terminology based on user type
+  const memberLabel = isTrainer ? 'Client' : 'Player';
+  const memberLabelPlural = isTrainer ? 'Clients' : 'Players';
+  const screenTitle = isTrainer ? 'Client Management' : 'Team Management';
+  const groupLabel = isTrainer ? 'Clients' : 'Team';
+  
+  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'assignments' | 'settings'>('overview');
   const [teamData, setTeamData] = useState<TeamDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [playerNames, setPlayerNames] = useState<Record<string, string>>({});
@@ -284,7 +319,19 @@ export default function TeamManagementScreen() {
     name: teamData.name,
     description: teamData.description || 'Sports team',
     code: teamData.inviteCode,
-    players: (teamData.members || []).filter(member => member.role === 'player').map(member => {
+    players: (() => {
+      // Deduplicate members by userId to prevent duplicate keys
+      const uniqueMembers = new Map<string, any>();
+      (teamData.members || []).forEach((member) => {
+        if (member.role === 'player' && member.userId) {
+          // Keep the first occurrence of each userId
+          if (!uniqueMembers.has(member.userId)) {
+            uniqueMembers.set(member.userId, member);
+          }
+        }
+      });
+      return Array.from(uniqueMembers.values());
+    })().map(member => {
       // Safe date handling
       let joinedAtString = 'Unknown';
       try {
@@ -352,8 +399,10 @@ export default function TeamManagementScreen() {
   const handleShareCode = async () => {
     try {
       await Share.share({
-        message: `Join my sports team "${teamInfo.name}" on KINETIC FLOW AI!\n\nTeam Code: ${teamInfo.code}\n\nDownload the app and enter this code to join the team.`,
-        title: 'Join My Sports Team',
+        message: isTrainer
+          ? `Join my training program "${teamInfo.name}" on KINETIC FLOW AI!\n\nInvite Code: ${teamInfo.code}\n\nDownload the app and enter this code to join.`
+          : `Join my sports team "${teamInfo.name}" on KINETIC FLOW AI!\n\nTeam Code: ${teamInfo.code}\n\nDownload the app and enter this code to join the team.`,
+        title: isTrainer ? 'Join My Training Program' : 'Join My Sports Team',
       });
     } catch (error) {
       console.error('Error sharing:', error);
@@ -408,7 +457,7 @@ export default function TeamManagementScreen() {
       setShowProfileModal(true);
     } catch (error) {
       console.error('❌ Error loading player profile:', error);
-      Alert.alert('Error', 'Failed to load player profile');
+      Alert.alert('Error', `Failed to load ${memberLabel.toLowerCase()} profile`);
     } finally {
       setLoadingPlayerData(false);
     }
@@ -560,7 +609,7 @@ export default function TeamManagementScreen() {
       setShowWorkoutsModal(true);
     } catch (error) {
       console.error('❌ Error loading player workouts:', error);
-      Alert.alert('Error', 'Failed to load player workouts');
+      Alert.alert('Error', `Failed to load ${memberLabel.toLowerCase()} workouts`);
     } finally {
       setLoadingPlayerData(false);
     }
@@ -575,7 +624,7 @@ export default function TeamManagementScreen() {
       setShowNutritionModal(true);
     } catch (error) {
       console.error('❌ Error loading player nutrition:', error);
-      Alert.alert('Error', 'Failed to load player nutrition data');
+      Alert.alert('Error', `Failed to load ${memberLabel.toLowerCase()} nutrition data`);
     } finally {
       setLoadingPlayerData(false);
     }
@@ -628,7 +677,7 @@ export default function TeamManagementScreen() {
         
         <View style={styles.codeSection}>
           <Text style={[styles.codeLabel, { color: BrandColors.text }]}>
-            Team Code
+            {isTrainer ? 'Invite Code' : 'Team Code'}
           </Text>
           <View style={styles.codeContainer}>
             <Text style={[styles.codeText, { color: BrandColors.accent }]}>
@@ -642,7 +691,9 @@ export default function TeamManagementScreen() {
             </TouchableOpacity>
           </View>
           <Text style={[styles.codeInstructions, { color: BrandColors.textSecondary }]}>
-            Share this code with players so they can join your team
+            {isTrainer 
+              ? `Share this code with clients so they can join your ${groupLabel.toLowerCase()}`
+              : `Share this code with players so they can join your team`}
           </Text>
         </View>
       </View>
@@ -653,7 +704,7 @@ export default function TeamManagementScreen() {
             {teamInfo.playerCount}
           </Text>
           <Text style={[styles.statLabel, { color: BrandColors.textSecondary }]}>
-            Players
+            {memberLabelPlural}
           </Text>
         </View>
         
@@ -735,71 +786,25 @@ export default function TeamManagementScreen() {
           </Text>
         </View>
       </View>
-      
-      <View style={styles.quickActions}>
-        <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>
-          Quick Actions
-        </Text>
-        
-        <View style={styles.actionGrid}>
-          <TouchableOpacity 
-            style={styles.actionCard}
-            onPress={() => setShowWorkoutDatePicker(true)}
-          >
-            <IconSymbol name="plus.circle" size={24} color={BrandColors.accent} />
-            <Text style={[styles.actionText, { color: BrandColors.text }]}>
-              Assign Workout
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.actionCard}
-            onPress={() => router.push('/(tabs)/nutrition')}
-          >
-            <IconSymbol name="fork.knife" size={24} color={BrandColors.accent} />
-            <Text style={[styles.actionText, { color: BrandColors.text }]}>
-              Create Meal Plan
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.actionCard}
-            onPress={() => Alert.alert('Coming Soon', 'Team challenges feature coming soon!')}
-          >
-            <IconSymbol name="trophy" size={24} color={BrandColors.accent} />
-            <Text style={[styles.actionText, { color: BrandColors.text }]}>
-              Create Challenge
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.actionCard}
-            onPress={() => Alert.alert('Coming Soon', 'Team chat feature coming soon!')}
-          >
-            <IconSymbol name="message" size={24} color={BrandColors.accent} />
-            <Text style={[styles.actionText, { color: BrandColors.text }]}>
-              Team Chat
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
     </View>
   );
   
   const renderPlayers = () => (
     <View style={styles.tabContent}>
       <Text style={[styles.sectionTitle, { color: BrandColors.text }]}>
-        Team Players ({teamInfo.playerCount})
+        {groupLabel} {memberLabelPlural} ({teamInfo.playerCount})
       </Text>
       
       {teamInfo.playerCount === 0 ? (
         <View style={styles.emptyState}>
           <IconSymbol name="person.2" size={48} color={BrandColors.textSecondary} />
           <Text style={[styles.emptyStateTitle, { color: BrandColors.text }]}>
-            No Players Yet
+            No {memberLabelPlural} Yet
           </Text>
           <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
-            Share your team code with players to get started
+            {isTrainer 
+              ? `Share your invite code with clients to get started`
+              : `Share your team code with players to get started`}
           </Text>
         </View>
       ) : (
@@ -973,7 +978,9 @@ export default function TeamManagementScreen() {
             No Assignments Yet
           </Text>
           <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
-            Create and share workouts or meal plans with your players to see them here
+            {isTrainer
+              ? `Create and share workouts or meal plans with your clients to see them here`
+              : `Create and share workouts or meal plans with your players to see them here`}
           </Text>
         </View>
       ) : filteredAssignments.length === 0 && mealPlanAssignments.length === 0 ? (
@@ -984,10 +991,16 @@ export default function TeamManagementScreen() {
           </Text>
           <Text style={[styles.emptyStateText, { color: BrandColors.textSecondary }]}>
             {assignmentFilter === 'all' 
-              ? 'Create and share workouts with your players to see them here'
+              ? isTrainer
+                ? `Create and share workouts with your clients to see them here`
+                : `Create and share workouts with your players to see them here`
               : assignmentFilter === 'completed'
-              ? 'No assignments have been fully completed by all players yet'
-              : 'All assignments have been completed by all players'}
+              ? isTrainer
+                ? `No assignments have been fully completed by all clients yet`
+                : `No assignments have been fully completed by all players yet`
+              : isTrainer
+                ? `All assignments have been completed by all clients`
+                : `All assignments have been completed by all players`}
           </Text>
         </View>
       ) : (
@@ -1019,7 +1032,7 @@ export default function TeamManagementScreen() {
                           {mealPlan.mealPlanName || 'Meal Plan'}
                         </Text>
                         <Text style={[styles.assignmentDetails, { color: BrandColors.textSecondary, marginTop: 2 }]}>
-                          Assigned to {mealPlan.assignedPlayers?.length || 0} player{(mealPlan.assignedPlayers?.length || 0) !== 1 ? 's' : ''}
+                          Assigned to {mealPlan.assignedPlayers?.length || 0} {memberLabel.toLowerCase()}{(mealPlan.assignedPlayers?.length || 0) !== 1 ? 's' : ''}
                         </Text>
                         <Text style={[styles.assignmentDue, { color: BrandColors.textSecondary, marginTop: 2 }]}>
                           {mealPlan.date ? new Date(mealPlan.date).toLocaleDateString() : 'No date'}
@@ -1042,7 +1055,7 @@ export default function TeamManagementScreen() {
                           
                           Alert.alert(
                             'Delete Meal Plan',
-                            'Are you sure you want to delete this meal plan assignment? This will remove it from all players.',
+                            `Are you sure you want to delete this meal plan assignment? This will remove it from all ${memberLabelPlural.toLowerCase()}.`,
                             [
                               { text: 'Cancel', style: 'cancel' },
                               { 
@@ -1092,7 +1105,7 @@ export default function TeamManagementScreen() {
                     <View style={styles.completedBadge}>
                       <IconSymbol name="checkmark.circle.fill" size={16} color="#22c55e" />
                       <Text style={[styles.completedBadgeText, { color: '#22c55e' }]}>
-                        {mealPlan.completedBy.length} of {mealPlan.assignedPlayers?.length || 0} Players Completed
+                        {mealPlan.completedBy.length} of {mealPlan.assignedPlayers?.length || 0} {memberLabelPlural} Completed
                       </Text>
                     </View>
                   )}
@@ -1101,10 +1114,10 @@ export default function TeamManagementScreen() {
                   {mealPlan.completionStatus && Object.keys(mealPlan.completionStatus).length > 0 && (
                     <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: BrandColors.textSecondary + '20' }}>
                       <Text style={[styles.assignmentDetails, { color: BrandColors.textSecondary, fontSize: 11, marginBottom: 4 }]}>
-                        Player Status:
+                        {memberLabel} Status:
                       </Text>
                       {Object.entries(mealPlan.completionStatus).map(([playerId, status]: [string, any]) => {
-                        const playerName = mealPlan.assignedPlayerNames?.[mealPlan.assignedPlayers?.indexOf(playerId) || 0] || 'Player';
+                        const playerName = mealPlan.assignedPlayerNames?.[mealPlan.assignedPlayers?.indexOf(playerId) || 0] || memberLabel;
                         const isCompleted = status.completed || false;
                         const hasEdits = mealPlan.playerEdits?.[playerId] ? true : false;
                         
@@ -1190,7 +1203,7 @@ export default function TeamManagementScreen() {
                   {assignment.workoutName}
                 </Text>
                 <Text style={[styles.assignmentDetails, { color: BrandColors.textSecondary, marginTop: 2 }]}>
-                  Assigned to {assignment.assignedPlayers.length} player{assignment.assignedPlayers.length !== 1 ? 's' : ''}
+                  Assigned to {assignment.assignedPlayers.length} {memberLabel.toLowerCase()}{assignment.assignedPlayers.length !== 1 ? 's' : ''}
                 </Text>
                 <Text style={[styles.assignmentDue, { color: BrandColors.textSecondary, marginTop: 2 }]}>
                   {new Date(assignment.createdAt).toLocaleDateString()}
@@ -1269,7 +1282,7 @@ export default function TeamManagementScreen() {
                     
                     Alert.alert(
                       'Delete Assignment',
-                      'Are you sure you want to delete this workout assignment? This will remove it from all players.',
+                      `Are you sure you want to delete this workout assignment? This will remove it from all ${memberLabelPlural.toLowerCase()}.`,
                       [
                         { text: 'Cancel', style: 'cancel' },
                         { 
@@ -1319,14 +1332,14 @@ export default function TeamManagementScreen() {
               <View style={styles.completedBadge}>
                 <IconSymbol name="checkmark.circle.fill" size={16} color="#22c55e" />
                 <Text style={[styles.completedBadgeText, { color: '#22c55e' }]}>
-                  All Players Completed ({completedCount}/{assignedCount})
+                  All {memberLabelPlural} Completed ({completedCount}/{assignedCount})
                 </Text>
               </View>
             )}
             {!isFullyCompleted && assignedCount > 0 && (
               <View style={styles.pendingBadge}>
                 <Text style={[styles.pendingBadgeText, { color: BrandColors.textSecondary }]}>
-                  {completedCount}/{assignedCount} Players Completed
+                  {completedCount}/{assignedCount} {memberLabelPlural} Completed
                 </Text>
               </View>
             )}
@@ -1338,6 +1351,200 @@ export default function TeamManagementScreen() {
         </>
       )}
     </View>
+    );
+  };
+  
+  const renderSettings = () => {
+    const coaches = (teamData?.members || []).filter(member => member.role === 'coach' || member.role === 'admin');
+    const isMainCoach = user?.uid === teamData?.coachId;
+    
+    return (
+      <View style={styles.tabContent}>
+        <View style={styles.settingsSection}>
+          <View style={styles.settingsHeader}>
+            <IconSymbol name="gearshape.fill" size={24} color={BrandColors.accent} />
+            <Text style={[styles.settingsTitle, { color: BrandColors.text }]}>
+              Team Settings
+            </Text>
+          </View>
+          
+          {/* Coaches Management */}
+          <View style={styles.settingsCard}>
+            <View style={styles.settingsCardHeader}>
+              <IconSymbol name="person.badge.shield.checkmark.fill" size={20} color="#3b82f6" />
+              <Text style={[styles.settingsCardTitle, { color: BrandColors.text }]}>
+                Coaches ({coaches.length})
+              </Text>
+            </View>
+            <Text style={[styles.settingsCardDescription, { color: BrandColors.textSecondary }]}>
+              Manage coaches who can assign workouts and meal plans to players
+            </Text>
+            
+            {coaches.length > 0 ? (
+              <View style={styles.coachesList}>
+                {coaches.map((coach) => {
+                  const coachName = playerNames[coach.userId] || coach.name || 'Coach';
+                  const isCurrentUser = coach.userId === user?.uid;
+                  const isPrimaryCoach = coach.userId === teamData?.coachId;
+                  
+                  return (
+                    <View key={coach.userId} style={styles.coachItem}>
+                      <View style={styles.coachItemInfo}>
+                        <View style={[styles.coachAvatar, { backgroundColor: isPrimaryCoach ? '#3b82f6' + '30' : BrandColors.accent + '20' }]}>
+                          <IconSymbol 
+                            name={isPrimaryCoach ? "crown.fill" : "person.badge.shield.checkmark.fill"} 
+                            size={18} 
+                            color={isPrimaryCoach ? '#3b82f6' : BrandColors.accent} 
+                          />
+                        </View>
+                        <View style={styles.coachItemDetails}>
+                          <View style={styles.coachItemNameRow}>
+                            <Text style={[styles.coachItemName, { color: BrandColors.text }]}>
+                              {coachName}
+                            </Text>
+                            {isPrimaryCoach && (
+                              <View style={styles.primaryBadge}>
+                                <Text style={[styles.primaryBadgeText, { color: '#3b82f6' }]}>
+                                  Primary
+                                </Text>
+                              </View>
+                            )}
+                            {isCurrentUser && (
+                              <View style={styles.youBadge}>
+                                <Text style={[styles.youBadgeText, { color: BrandColors.accent }]}>
+                                  You
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={[styles.coachItemRole, { color: BrandColors.textSecondary }]}>
+                            {coach.role === 'admin' ? 'Admin' : 'Coach'}
+                          </Text>
+                        </View>
+                      </View>
+                      {isMainCoach && !isCurrentUser && (
+                        <TouchableOpacity
+                          style={styles.removeCoachButton}
+                          onPress={() => {
+                            Alert.alert(
+                              'Remove Coach',
+                              `Are you sure you want to remove ${coachName} as a coach?`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                  text: 'Remove',
+                                  style: 'destructive',
+                                  onPress: async () => {
+                                    // Check feature flag - show "Coming Soon" if disabled
+                                    if (!checkFeatureOrShowComingSoon('coachRemoval', 'Coach Removal')) {
+                                      return;
+                                    }
+                                    // TODO: Implement remove coach functionality when feature is enabled
+                                    Alert.alert('Coming Soon', 'Coach removal will be available soon.');
+                                  }
+                                }
+                              ]
+                            );
+                          }}
+                        >
+                          <IconSymbol name="xmark.circle.fill" size={20} color="#ef4444" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={[styles.emptyText, { color: BrandColors.textSecondary }]}>
+                No coaches found
+              </Text>
+            )}
+            
+            {isMainCoach && (
+              <TouchableOpacity
+                style={styles.addCoachButton}
+                onPress={() => {
+                  Alert.alert(
+                    'Add Coach',
+                    'Enter the email or user ID of the person you want to add as a coach.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Add',
+                        onPress: () => {
+                          // Check feature flag - show "Coming Soon" if disabled
+                          if (!checkFeatureOrShowComingSoon('addCoach', 'Add Coach')) {
+                            return;
+                          }
+                          // TODO: Implement add coach functionality when feature is enabled
+                          Alert.alert('Coming Soon', 'Adding coaches will be available soon.');
+                        }
+                      }
+                    ]
+                  );
+                }}
+              >
+                <IconSymbol name="plus.circle.fill" size={20} color={BrandColors.accent} />
+                <Text style={[styles.addCoachButtonText, { color: BrandColors.accent }]}>
+                  Add Coach
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          {/* Team Info Settings */}
+          <View style={styles.settingsCard}>
+            <View style={styles.settingsCardHeader}>
+              <IconSymbol name="info.circle.fill" size={20} color="#22c55e" />
+              <Text style={[styles.settingsCardTitle, { color: BrandColors.text }]}>
+                Team Information
+              </Text>
+            </View>
+            <View style={styles.settingItem}>
+              <Text style={[styles.settingLabel, { color: BrandColors.textSecondary }]}>
+                Team Name
+              </Text>
+              <Text style={[styles.settingValue, { color: BrandColors.text }]}>
+                {teamData?.name || 'N/A'}
+              </Text>
+            </View>
+            <View style={styles.settingItem}>
+              <Text style={[styles.settingLabel, { color: BrandColors.textSecondary }]}>
+                Invite Code
+              </Text>
+              <View style={styles.inviteCodeRow}>
+                <Text style={[styles.settingValue, { color: BrandColors.accent }]}>
+                  {teamData?.inviteCode || 'N/A'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.copyButton}
+                  onPress={handleShareCode}
+                >
+                  <IconSymbol name="square.and.arrow.up" size={16} color={BrandColors.accent} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            {isMainCoach && (
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => {
+                  // Check feature flag - show "Coming Soon" if disabled
+                  if (!checkFeatureOrShowComingSoon('teamManagement', 'Team Information Editing')) {
+                    return;
+                  }
+                  // TODO: Implement team info editing when feature is enabled
+                  Alert.alert('Coming Soon', 'Team information editing will be available soon.');
+                }}
+              >
+                <IconSymbol name="pencil" size={16} color={BrandColors.accent} />
+                <Text style={[styles.editButtonText, { color: BrandColors.accent }]}>
+                  Edit Team Info
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </View>
     );
   };
   
@@ -1360,7 +1567,7 @@ export default function TeamManagementScreen() {
         </TouchableOpacity>
         
         <Text style={[styles.title, { color: BrandColors.text }]}>
-          Team Management
+          {screenTitle}
         </Text>
         
         <TouchableOpacity
@@ -1374,15 +1581,18 @@ export default function TeamManagementScreen() {
       <View style={styles.tabBar}>
         {[
           { key: 'overview', label: 'Overview', icon: 'chart.bar' },
-          { key: 'players', label: 'Players', icon: 'person.2' },
+          { key: 'players', label: memberLabelPlural, icon: 'person.2' },
           { key: 'assignments', label: 'Assignments', icon: 'list.bullet' },
-          { key: 'chat', label: 'Chat', icon: 'message' },
+          { key: 'settings', label: 'Settings', icon: 'gearshape' },
         ].map((tab) => (
           <TouchableOpacity
             key={tab.key}
             style={[
               styles.tabButton,
-              activeTab === tab.key && { backgroundColor: BrandColors.accent + '20' }
+              activeTab === tab.key && { 
+                backgroundColor: BrandColors.accent + '20',
+                borderColor: BrandColors.accent + '40',
+              }
             ]}
             onPress={() => setActiveTab(tab.key as any)}
           >
@@ -1405,88 +1615,7 @@ export default function TeamManagementScreen() {
         {activeTab === 'overview' && renderOverview()}
         {activeTab === 'players' && renderPlayers()}
         {activeTab === 'assignments' && renderAssignments()}
-        {activeTab === 'chat' && (
-          <KeyboardAvoidingView 
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            {chatLoading ? (
-              <View style={styles.emptyState}>
-                <ActivityIndicator size="large" color={BrandColors.accent} />
-                <Text style={[styles.emptyStateTitle, { color: BrandColors.text }]}>
-                  Loading messages...
-                </Text>
-              </View>
-            ) : chatMessages.length === 0 ? (
-              <View style={styles.emptyState}>
-                <IconSymbol name="message" size={48} color={BrandColors.textSecondary} />
-                <Text style={[styles.emptyStateTitle, { color: BrandColors.text }]}>
-                  No messages yet
-                </Text>
-                <Text style={[styles.emptyStateSubtext, { color: BrandColors.textSecondary }]}>
-                  Be the first to start a conversation in your team!
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                data={chatMessages}
-                keyExtractor={(item) => item.id}
-                style={styles.prScrollView}
-                renderItem={({ item }) => (
-                  <View style={[
-                    styles.assignmentCard,
-                    item.userId === user?.uid && { backgroundColor: BrandColors.accent + '20' }
-                  ]}>
-                    <View style={[
-                      styles.assignmentInfo,
-                      { 
-                        backgroundColor: item.userId === user?.uid 
-                          ? BrandColors.accent 
-                          : BrandColors.gray800 
-                      }
-                    ]}>
-                      <Text style={[
-                        styles.assignmentTitle,
-                        { color: '#FFFFFF' }
-                      ]}>
-                        {item.message}
-                      </Text>
-                    </View>
-                    <Text style={[styles.assignmentDue, { color: BrandColors.textSecondary }]}>
-                      {item.userName} • {formatTime(item.timestamp)}
-                    </Text>
-                  </View>
-                )}
-              />
-            )}
-            
-            <View style={styles.menuContainer}>
-              <TextInput
-                style={[styles.codeText, { 
-                  backgroundColor: BrandColors.gray800, 
-                  color: BrandColors.text,
-                  borderColor: BrandColors.textSecondary + '20'
-                }]}
-                placeholder="Type a message..."
-                placeholderTextColor={BrandColors.textSecondary}
-                value={newMessage}
-                onChangeText={setNewMessage}
-                multiline
-              />
-              <TouchableOpacity
-                style={[styles.shareButton, { backgroundColor: BrandColors.accent }]}
-                onPress={handleSendChatMessage}
-                disabled={!newMessage.trim()}
-              >
-                <IconSymbol 
-                  name="paperplane.fill" 
-                  size={16} 
-                  color="#FFFFFF" 
-                />
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        )}
+        {activeTab === 'settings' && renderSettings()}
       </ScrollView>
 
       {/* Player Menu Modal */}
@@ -1850,32 +1979,46 @@ export default function TeamManagementScreen() {
                     // Determine overall performance status
                     let performanceStatus = 'Maintaining';
                     let performanceColor = BrandColors.textSecondary;
-                    let performanceMessage = 'Player is maintaining their activity level.';
+                    let performanceMessage = isTrainer
+                      ? `${memberLabel} is maintaining their activity level.`
+                      : 'Player is maintaining their activity level.';
                     
                     if (volumeTrend > 10 && workoutsThisWeek >= 3) {
                       performanceStatus = 'Improving';
                       performanceColor = '#22c55e';
-                      performanceMessage = 'Player is showing strong improvement in both volume and consistency.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} is showing strong improvement in both volume and consistency.`
+                        : 'Player is showing strong improvement in both volume and consistency.';
                     } else if (volumeTrend > 5 && personalRecords.length > 0) {
                       performanceStatus = 'Progressing';
                       performanceColor = BrandColors.accent;
-                      performanceMessage = 'Player is making steady progress with new personal records.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} is making steady progress with new personal records.`
+                        : 'Player is making steady progress with new personal records.';
                     } else if (volumeTrend > 0) {
                       performanceStatus = 'Improving';
                       performanceColor = '#22c55e';
-                      performanceMessage = 'Player is increasing training volume.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} is increasing training volume.`
+                        : 'Player is increasing training volume.';
                     } else if (volumeTrend < -10) {
                       performanceStatus = 'Declining';
                       performanceColor = '#ef4444';
-                      performanceMessage = 'Player training volume has decreased significantly. Consider checking in.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} training volume has decreased significantly. Consider checking in.`
+                        : 'Player training volume has decreased significantly. Consider checking in.';
                     } else if (workoutsThisWeek === 0 && streakData.current === 0) {
                       performanceStatus = 'Inactive';
                       performanceColor = '#ef4444';
-                      performanceMessage = 'Player has not worked out recently. May need motivation.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} has not worked out recently. May need motivation.`
+                        : 'Player has not worked out recently. May need motivation.';
                     } else if (consistencyScore.score < 50) {
                       performanceStatus = 'Inconsistent';
                       performanceColor = '#f59e0b';
-                      performanceMessage = 'Player needs to improve workout consistency.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} needs to improve workout consistency.`
+                        : 'Player needs to improve workout consistency.';
                     }
                     
                     // Determine if player is progressing
@@ -1984,7 +2127,9 @@ export default function TeamManagementScreen() {
                           </Text>
                           <Text style={[styles.trendDescription, { color: BrandColors.textSecondary }]}>
                             {volumeTrend > 10 
-                              ? 'Significant volume increase - player is pushing harder'
+                              ? isTrainer
+                                ? `Significant volume increase - ${memberLabel.toLowerCase()} is pushing harder`
+                                : 'Significant volume increase - player is pushing harder'
                               : volumeTrend > 0
                               ? 'Gradual volume increase - steady progress'
                               : volumeTrend < -10
@@ -2006,7 +2151,9 @@ export default function TeamManagementScreen() {
                               <View style={styles.insightItem}>
                                 <Text style={[styles.insightIcon]}>⚠️</Text>
                                 <Text style={[styles.insightText, { color: BrandColors.text }]}>
-                                  No workouts this week - player may need motivation or support
+                                  {isTrainer
+                                    ? `No workouts this week - ${memberLabel.toLowerCase()} may need motivation or support`
+                                    : 'No workouts this week - player may need motivation or support'}
                                 </Text>
                               </View>
                             )}
@@ -2033,7 +2180,9 @@ export default function TeamManagementScreen() {
                               <View style={styles.insightItem}>
                                 <Text style={[styles.insightIcon]}>🏆</Text>
                                 <Text style={[styles.insightText, { color: BrandColors.text }]}>
-                                  {personalRecords.length} personal record{personalRecords.length !== 1 ? 's' : ''} set - player is getting stronger
+                                  {isTrainer
+                                    ? `${personalRecords.length} personal record${personalRecords.length !== 1 ? 's' : ''} set - ${memberLabel.toLowerCase()} is getting stronger`
+                                    : `${personalRecords.length} personal record${personalRecords.length !== 1 ? 's' : ''} set - player is getting stronger`}
                                 </Text>
                               </View>
                             )}
@@ -2183,7 +2332,9 @@ export default function TeamManagementScreen() {
                   No workouts found
                 </Text>
                 <Text style={[styles.emptyStateSubtext, { color: BrandColors.textSecondary }]}>
-                  This player hasn't logged any workouts yet
+                  {isTrainer 
+                    ? `This client hasn't logged any workouts yet`
+                    : `This player hasn't logged any workouts yet`}
                 </Text>
               </View>
             )}
@@ -2352,24 +2503,34 @@ export default function TeamManagementScreen() {
                     // Determine performance status
                     let performanceStatus = 'Maintaining';
                     let performanceColor = BrandColors.textSecondary;
-                    let performanceMessage = 'Player is maintaining their nutrition logging.';
+                    let performanceMessage = isTrainer 
+                      ? `${memberLabel} is maintaining their nutrition logging.`
+                      : 'Player is maintaining their nutrition logging.';
                     
                     if (daysThisWeek >= 6 && consistencyScore >= 80) {
                       performanceStatus = 'Excellent';
                       performanceColor = '#22c55e';
-                      performanceMessage = 'Player is consistently logging meals and maintaining good nutrition habits.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} is consistently logging meals and maintaining good nutrition habits.`
+                        : 'Player is consistently logging meals and maintaining good nutrition habits.';
                     } else if (daysThisWeek >= 4 && calorieTrend > -5) {
                       performanceStatus = 'Good';
                       performanceColor = BrandColors.accent;
-                      performanceMessage = 'Player is maintaining regular meal logging.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} is maintaining regular meal logging.`
+                        : 'Player is maintaining regular meal logging.';
                     } else if (daysThisWeek < 3) {
                       performanceStatus = 'Needs Improvement';
                       performanceColor = '#f59e0b';
-                      performanceMessage = 'Player needs to log meals more consistently.';
+                      performanceMessage = isTrainer
+                        ? `${memberLabel} needs to log meals more consistently.`
+                        : 'Player needs to log meals more consistently.';
                     } else if (daysThisWeek === 0) {
                       performanceStatus = 'Inactive';
                       performanceColor = '#ef4444';
-                      performanceMessage = 'Player has not logged meals recently. May need encouragement.';
+                      performanceMessage = isTrainer
+        ? `${memberLabel} has not logged meals recently. May need encouragement.`
+        : 'Player has not logged meals recently. May need encouragement.';
                     }
 
                     return (
@@ -2545,7 +2706,9 @@ export default function TeamManagementScreen() {
                                 <View style={styles.insightItem}>
                                   <Text style={[styles.insightIcon]}>✅</Text>
                                   <Text style={[styles.insightText, { color: BrandColors.text }]}>
-                                    Consistent meal logging - player is maintaining good nutrition tracking habits
+                                    {isTrainer
+                                      ? `Consistent meal logging - ${memberLabel.toLowerCase()} is maintaining good nutrition tracking habits`
+                                      : 'Consistent meal logging - player is maintaining good nutrition tracking habits'}
                                   </Text>
                                 </View>
                               )}
@@ -2733,10 +2896,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    gap: 4,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   tabLabel: {
     fontSize: 12,
@@ -2748,45 +2913,53 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   tabContent: {
-    gap: 20,
+    gap: 24,
+    paddingBottom: 20,
   },
   teamInfoCard: {
-    backgroundColor: BrandColors.background,
-    borderRadius: 16,
-    padding: 20,
+    backgroundColor: BrandColors.gray800,
+    borderRadius: 20,
+    padding: 28,
     borderWidth: 1,
-    borderColor: BrandColors.textSecondary + '20',
+    borderColor: BrandColors.accent + '30',
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+    gap: 20,
   },
   teamHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
   },
   teamIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: BrandColors.accent + '20',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
+    marginRight: 18,
   },
   teamDetails: {
     flex: 1,
   },
   teamName: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
     fontFamily: 'ui-rounded',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   teamDescription: {
     fontSize: 14,
     fontFamily: 'ui-rounded',
-    lineHeight: 20,
+    lineHeight: 22,
   },
   codeSection: {
-    gap: 8,
+    gap: 12,
+    marginTop: 8,
   },
   codeLabel: {
     fontSize: 14,
@@ -2796,10 +2969,12 @@ const styles = StyleSheet.create({
   codeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BrandColors.accent + '10',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: BrandColors.accent + '15',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: BrandColors.accent + '30',
   },
   codeText: {
     fontSize: 18,
@@ -2820,67 +2995,56 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 16,
+    marginTop: 8,
   },
   statCard: {
     flex: 1,
     minWidth: '45%',
-    backgroundColor: BrandColors.background,
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: BrandColors.gray800,
+    borderRadius: 16,
+    padding: 24,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: BrandColors.textSecondary + '20',
+    borderColor: BrandColors.accent + '20',
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 3,
+    gap: 8,
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     fontFamily: 'ui-rounded',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: 'ui-rounded',
     textAlign: 'center',
-  },
-  quickActions: {
-    gap: 16,
+    lineHeight: 18,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
     fontFamily: 'ui-rounded',
   },
-  actionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  actionCard: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: BrandColors.background,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: BrandColors.textSecondary + '20',
-    gap: 8,
-  },
-  actionText: {
-    fontSize: 12,
-    fontWeight: '500',
-    fontFamily: 'ui-rounded',
-    textAlign: 'center',
-  },
   playerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BrandColors.background,
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: BrandColors.gray800,
+    borderRadius: 16,
+    padding: 18,
     borderWidth: 1,
-    borderColor: BrandColors.textSecondary + '20',
+    borderColor: BrandColors.accent + '20',
+    marginBottom: 12,
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 2,
   },
   playerInfo: {
     flexDirection: 'row',
@@ -2923,13 +3087,18 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   assignmentCard: {
-    backgroundColor: BrandColors.background,
-    borderRadius: 12,
-    padding: 12,
+    backgroundColor: BrandColors.gray800,
+    borderRadius: 16,
+    padding: 18,
     borderWidth: 1,
-    borderColor: BrandColors.textSecondary + '20',
-    gap: 6,
-    marginBottom: 10,
+    borderColor: BrandColors.accent + '20',
+    gap: 8,
+    marginBottom: 14,
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 2,
   },
   assignmentHeader: {
     flexDirection: 'row',
@@ -3498,5 +3667,185 @@ const styles = StyleSheet.create({
   macroText: {
     fontSize: 12,
     fontFamily: 'ui-rounded',
+  },
+  settingsSection: {
+    gap: 20,
+  },
+  settingsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 8,
+  },
+  settingsTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    fontFamily: 'ui-rounded',
+  },
+  settingsCard: {
+    backgroundColor: BrandColors.gray800,
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: BrandColors.accent + '30',
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 3,
+    gap: 16,
+  },
+  settingsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  settingsCardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    fontFamily: 'ui-rounded',
+  },
+  settingsCardDescription: {
+    fontSize: 13,
+    fontFamily: 'ui-rounded',
+    lineHeight: 20,
+    marginTop: -8,
+  },
+  coachesList: {
+    gap: 12,
+    marginTop: 8,
+  },
+  coachItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: BrandColors.gray900,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BrandColors.accent + '15',
+  },
+  coachItemInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  coachAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coachItemDetails: {
+    flex: 1,
+  },
+  coachItemNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  coachItemName: {
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: 'ui-rounded',
+  },
+  coachItemRole: {
+    fontSize: 13,
+    fontFamily: 'ui-rounded',
+  },
+  primaryBadge: {
+    backgroundColor: '#3b82f6' + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#3b82f6' + '40',
+  },
+  primaryBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: 'ui-rounded',
+  },
+  youBadge: {
+    backgroundColor: BrandColors.accent + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: BrandColors.accent + '40',
+  },
+  youBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: 'ui-rounded',
+  },
+  removeCoachButton: {
+    padding: 8,
+  },
+  addCoachButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: BrandColors.accent + '15',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BrandColors.accent + '30',
+    marginTop: 8,
+  },
+  addCoachButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    fontFamily: 'ui-rounded',
+  },
+  settingItem: {
+    marginTop: 12,
+    gap: 6,
+  },
+  settingLabel: {
+    fontSize: 13,
+    fontFamily: 'ui-rounded',
+  },
+  settingValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: 'ui-rounded',
+  },
+  inviteCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  copyButton: {
+    padding: 8,
+    backgroundColor: BrandColors.accent + '15',
+    borderRadius: 8,
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: BrandColors.accent + '15',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BrandColors.accent + '30',
+    marginTop: 12,
+  },
+  editButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    fontFamily: 'ui-rounded',
+  },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: 'ui-rounded',
+    textAlign: 'center',
+    paddingVertical: 20,
   },
 });

@@ -59,7 +59,7 @@ export const useSharedWorkout = () => {
     try {
       // Clear current workout first - validate function exists
       if (typeof clearCurrentWorkout === 'function') {
-        clearCurrentWorkout();
+      clearCurrentWorkout();
       } else {
         console.error('❌ clearCurrentWorkout is not a function');
         return false;
@@ -87,23 +87,23 @@ export const useSharedWorkout = () => {
       // Set selected date to the determined date (this ensures the workout appears on the correct date in calendar)
       if (workoutDateToUse) {
         if (typeof setSelectedDate === 'function') {
-          setSelectedDate(workoutDateToUse);
-          console.log('📅 Setting selected date to:', workoutDateToUse.toISOString().split('T')[0]);
+        setSelectedDate(workoutDateToUse);
+        console.log('📅 Setting selected date to:', workoutDateToUse.toISOString().split('T')[0]);
         } else {
           console.error('❌ setSelectedDate is not a function');
         }
         
         // Also ensure currentWorkout.date is set to the assigned date
         try {
-          const currentState = useWorkoutStore.getState();
+        const currentState = useWorkoutStore.getState();
           if (currentState && typeof useWorkoutStore.setState === 'function') {
-            useWorkoutStore.setState({
-              currentWorkout: {
-                ...currentState.currentWorkout,
-                date: workoutDateToUse.toISOString().split('T')[0],
-              }
-            });
-            console.log('📅 Set currentWorkout.date to:', workoutDateToUse.toISOString().split('T')[0]);
+        useWorkoutStore.setState({
+          currentWorkout: {
+            ...currentState.currentWorkout,
+            date: workoutDateToUse.toISOString().split('T')[0],
+          }
+        });
+        console.log('📅 Set currentWorkout.date to:', workoutDateToUse.toISOString().split('T')[0]);
           }
         } catch (error) {
           console.error('❌ Error setting currentWorkout.date:', error);
@@ -112,7 +112,7 @@ export const useSharedWorkout = () => {
       
       // Set the workout title - validate function exists
       if (typeof setWorkoutTitle === 'function') {
-        setWorkoutTitle(global.sharedWorkoutName);
+      setWorkoutTitle(global.sharedWorkoutName);
       } else {
         console.error('❌ setWorkoutTitle is not a function');
         return false;
@@ -248,16 +248,16 @@ export const useSharedWorkout = () => {
                 // Update weight if provided (check for 0 as valid value)
                 if (setData.weight !== null && setData.weight !== undefined) {
                   if (typeof updateSet === 'function') {
-                    updateSet(addedExercise.id, targetSet.id, 'weight', setData.weight);
-                    console.log(`✅ Set weight to ${setData.weight}`);
+                  updateSet(addedExercise.id, targetSet.id, 'weight', setData.weight);
+                  console.log(`✅ Set weight to ${setData.weight}`);
                   }
                 }
                 
                 // Update reps if provided (check for 0 as valid value)
                 if (setData.reps !== null && setData.reps !== undefined) {
                   if (typeof updateSet === 'function') {
-                    updateSet(addedExercise.id, targetSet.id, 'reps', setData.reps);
-                    console.log(`✅ Set reps to ${setData.reps}`);
+                  updateSet(addedExercise.id, targetSet.id, 'reps', setData.reps);
+                  console.log(`✅ Set reps to ${setData.reps}`);
                   }
                 }
                 

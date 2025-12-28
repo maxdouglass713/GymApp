@@ -21,6 +21,8 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
   onDelete,
 }) => {
   const handleWeightChange = (exerciseId: string, setId: string, text: string) => {
+    if (!workout || !workout.exercises) return;
+    
     // Allow decimal points and numbers only
     const cleanedText = text.replace(/[^0-9.]/g, '');
     // Only allow one decimal point
@@ -30,9 +32,9 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
     if (parts[1] && parts[1].length > 1) return;
     
     const updatedWorkout = { ...workout };
-    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex.id === exerciseId);
-    if (exerciseIndex !== -1) {
-      const setIndex = updatedWorkout.exercises[exerciseIndex].sets.findIndex((s: any) => s.id === setId);
+    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex && ex.id === exerciseId);
+    if (exerciseIndex !== -1 && updatedWorkout.exercises[exerciseIndex]?.sets) {
+      const setIndex = updatedWorkout.exercises[exerciseIndex].sets.findIndex((s: any) => s && s.id === setId);
       if (setIndex !== -1) {
         updatedWorkout.exercises[exerciseIndex].sets[setIndex].weight = cleanedText ? parseFloat(cleanedText) : 0;
         onWorkoutChange(updatedWorkout);
@@ -41,10 +43,12 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
   };
 
   const handleRepsChange = (exerciseId: string, setId: string, text: string) => {
+    if (!workout || !workout.exercises) return;
+    
     const updatedWorkout = { ...workout };
-    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex.id === exerciseId);
-    if (exerciseIndex !== -1) {
-      const setIndex = updatedWorkout.exercises[exerciseIndex].sets.findIndex((s: any) => s.id === setId);
+    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex && ex.id === exerciseId);
+    if (exerciseIndex !== -1 && updatedWorkout.exercises[exerciseIndex]?.sets) {
+      const setIndex = updatedWorkout.exercises[exerciseIndex].sets.findIndex((s: any) => s && s.id === setId);
       if (setIndex !== -1) {
         updatedWorkout.exercises[exerciseIndex].sets[setIndex].reps = parseInt(text) || 0;
         onWorkoutChange(updatedWorkout);
@@ -53,15 +57,19 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
   };
 
   const handleRemoveSet = (exerciseId: string, setId: string) => {
+    if (!workout || !workout.exercises) return;
+    
     const updatedWorkout = { ...workout };
-    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex.id === exerciseId);
-    if (exerciseIndex !== -1) {
-      updatedWorkout.exercises[exerciseIndex].sets = updatedWorkout.exercises[exerciseIndex].sets.filter((s: any) => s.id !== setId);
+    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex && ex.id === exerciseId);
+    if (exerciseIndex !== -1 && updatedWorkout.exercises[exerciseIndex]?.sets) {
+      updatedWorkout.exercises[exerciseIndex].sets = updatedWorkout.exercises[exerciseIndex].sets.filter((s: any) => s && s.id && s.id !== setId);
       onWorkoutChange(updatedWorkout);
     }
   };
 
   const handleAddSet = (exerciseId: string) => {
+    if (!workout || !workout.exercises) return;
+    
     const newSet = {
       id: generateUniqueId('set'),
       reps: 0,
@@ -71,9 +79,9 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
     };
     
     const updatedWorkout = { ...workout };
-    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex.id === exerciseId);
+    const exerciseIndex = updatedWorkout.exercises.findIndex((ex: any) => ex && ex.id === exerciseId);
     if (exerciseIndex !== -1) {
-      updatedWorkout.exercises[exerciseIndex].sets = [...(updatedWorkout.exercises[exerciseIndex].sets || []), newSet];
+      updatedWorkout.exercises[exerciseIndex].sets = [...(updatedWorkout.exercises[exerciseIndex].sets || []).filter((s: any) => s && s.id), newSet];
       onWorkoutChange(updatedWorkout);
     }
   };
@@ -112,10 +120,12 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
   };
 
   const handleDelete = () => {
-    if (!workout?.id) {
+    if (!workout || !workout.id) {
       Alert.alert('Error', 'Cannot delete workout: No workout ID found.');
       return;
     }
+
+    const workoutId = workout.id; // Store in local variable to avoid accessing workout.id if workout becomes null
 
     Alert.alert(
       'Delete Workout',
@@ -127,10 +137,10 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
           style: 'destructive',
           onPress: async () => {
             try {
-              if (onDelete) {
+              if (onDelete && workoutId) {
                 // Call onDelete - it handles point deduction and state updates
                 // Don't show success alert here, let the parent handle it
-                await onDelete(workout.id);
+                await onDelete(workoutId);
                 onClose(); // Close modal immediately after deletion starts
               } else {
                 Alert.alert('Error', 'Delete functionality not available.');
@@ -160,8 +170,8 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
           </View>
 
           <ScrollView style={styles.editModalScroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.editModalScrollContent}>
-            {workout?.exercises?.map((exercise: any, index: number) => (
-              <View key={`edit-exercise-${exercise.id}-${index}`} style={[styles.editExerciseCard, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.textSecondary }]}>
+            {workout?.exercises?.filter((exercise: any) => exercise && exercise.id).map((exercise: any, index: number) => (
+              <View key={`edit-exercise-${exercise.id || 'ex-' + index}-${index}-${workout?.id || 'workout'}`} style={[styles.editExerciseCard, { backgroundColor: BrandColors.gray800, borderColor: BrandColors.textSecondary }]}>
                 <View style={styles.editExerciseHeader}>
                   <Text style={[styles.exerciseName, { color: BrandColors.text }]}>{exercise.name}</Text>
                 </View>
@@ -174,8 +184,8 @@ export const EditTodaysWorkoutModal: React.FC<EditTodaysWorkoutModalProps> = ({
                   </View>
                 ) : (
                   <View style={styles.setsContainer}>
-                    {exercise.sets?.map((set: any, setIndex: number) => (
-                      <View key={`edit-set-${set.id || setIndex}-${exercise.id}`}>
+                    {exercise.sets?.filter((set: any) => set && set.id).map((set: any, setIndex: number) => (
+                      <View key={`edit-set-${set.id || 'set-' + setIndex}-${setIndex}-${exercise.id || 'ex'}`}>
                         <View style={styles.setRow}>
                           <Text style={[styles.setNumber, { color: BrandColors.textSecondary }]}>
                             Set {setIndex + 1}

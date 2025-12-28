@@ -141,18 +141,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           }
         }
       } else {
-        console.log('🔓 User signed out - checking for Bruce Wayne bypass mode');
+        console.log('🔓 User signed out');
         previousUidRef.current = null; // Clear the previous UID
         setUser(null);
         setProfile(null);
-        
-        // Check for Bruce Wayne bypass mode (local profile data)
-        try {
-          await loadProfileFromStorage();
-          console.log('🦇 Bruce Wayne bypass mode - profile loaded from storage');
-        } catch (error) {
-          console.log('📭 No local profile found - normal sign out');
-        }
       }
       
       setLoading(false);
@@ -343,7 +335,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return profile.onboardingComplete;
     }
     
-    // Check Bruce Wayne bypass mode (local profile)
+    // Check local profile store as fallback
     if (isOnboarded && userStoreProfile) {
       return true;
     }

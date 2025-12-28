@@ -4,21 +4,15 @@ import React from 'react';
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { BrandColors, Typography, Spacing } from '@/constants/theme';
+import { CustomTabBar } from '@/components/navigation/CustomTabBar';
 
 export default function TabLayout() {
   return (
     <Tabs
+      tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         tabBarActiveTintColor: BrandColors.accent,
         tabBarInactiveTintColor: BrandColors.textSecondary,
-        tabBarStyle: {
-          backgroundColor: BrandColors.background,
-          borderTopColor: BrandColors.gray800,
-          borderTopWidth: 1,
-          paddingTop: Spacing.sm,
-          paddingBottom: Spacing.sm,
-          height: 88,
-        },
         tabBarLabelStyle: {
           fontSize: Typography.fontSize.xs,
           fontFamily: Typography.fontFamily,
@@ -26,7 +20,6 @@ export default function TabLayout() {
           marginTop: Spacing.xs,
         },
         headerShown: false,
-        tabBarButton: HapticTab,
       }}>
       <Tabs.Screen
         name="index"
@@ -52,15 +45,13 @@ export default function TabLayout() {
       <Tabs.Screen
         name="community"
         options={{
-          title: 'Community',
-          tabBarIcon: ({ color }) => <IconSymbol size={24} name="person.3.fill" color={color} />,
+          href: null, // Hide from tab bar but keep accessible via navigation
         }}
       />
       <Tabs.Screen
         name="progress"
         options={{
-          title: 'Progress',
-          tabBarIcon: ({ color }) => <IconSymbol size={24} name="chart.line.uptrend.xyaxis" color={color} />,
+          href: null, // Hide from tab bar but keep accessible via navigation
         }}
       />
       <Tabs.Screen
@@ -73,8 +64,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="store"
         options={{
-          title: 'Store',
-          tabBarIcon: ({ color }) => <IconSymbol size={24} name="bag.fill" color={color} />,
+          href: null, // Hide from tab bar but keep accessible via navigation
         }}
       />
     </Tabs>

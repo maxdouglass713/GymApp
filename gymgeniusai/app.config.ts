@@ -10,7 +10,10 @@ export default {
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.kineticflowai.app",
-    buildNumber: "1",
+    buildNumber: "19",
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+    },
   },
   android: {
     package: "com.kineticflowai.app",
@@ -28,17 +31,22 @@ export default {
     output: "static",
     favicon: "./assets/images/favicon.png",
   },
+  extra: {
+    eas: {
+      projectId: "7c0c75b6-ee70-4fc9-b87a-b27748e4046c",
+    },
+  },
   plugins: [
     "expo-router",
     [
       "expo-splash-screen",
       {
-        image: "./assets/images/splash-icon.png",
-        imageWidth: 200,
+        image: "./assets/images/logo.png",
+        imageWidth: 300,
         resizeMode: "contain",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#0a0f1f",
         dark: {
-          backgroundColor: "#000000",
+          backgroundColor: "#0a0f1f",
         },
       },
     ],

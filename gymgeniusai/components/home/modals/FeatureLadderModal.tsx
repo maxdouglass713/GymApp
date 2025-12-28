@@ -1,48 +1,142 @@
+/**
+ * AI Features Showcase
+ * 
+ * Displays all AI-powered features, their unlock requirements, and usage status
+ * Completely AI-oriented - no Volt-based features
+ */
+
 import React from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, StyleSheet, Alert } from 'react-native';
 import { BrandColors, Typography, Spacing, BorderRadius } from '@/constants/theme';
-import { FEATURE_CATALOG } from '@/stores/pointsStore';
-import { getFeatureDisplayName } from '@/utils/features/featureHelpers';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 
 interface FeatureLadderModalProps {
   visible: boolean;
-  totalPoints: number;
-  isFeatureUnlocked: (key: string) => boolean;
-  nextUnlock: [string, number] | undefined;
   onClose: () => void;
-  onFeatureClick: (featureKey: string, points: number) => void;
-  isCoach?: boolean;
+  onViewPlans?: () => void; // Callback to open AIInfoModal with plans tab
 }
+
+interface AIFeature {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  tier: 'pro' | 'elite';
+  featureKey: 'mealPlan' | 'macroEstimation' | 'workoutPlan' | 'workoutTips' | 'coachFeatures';
+  location: string;
+  usage?: {
+    used: number;
+    limit: number;
+    resetDate: Date;
+  };
+}
+
+const AI_FEATURES: AIFeature[] = [
+  {
+    id: 'meal-plans',
+    name: 'AI Meal Plans',
+    description: 'Generate personalized meal plans tailored to your goals and preferences',
+    icon: 'fork.knife',
+    tier: 'pro',
+    featureKey: 'mealPlan',
+    location: 'Nutrition tab → Meal Plan Generator',
+  },
+  {
+    id: 'macro-estimation',
+    name: 'AI Macro Estimation',
+    description: 'Get instant macro estimates for custom meals by name and serving size',
+    icon: 'chart.bar.fill',
+    tier: 'pro',
+    featureKey: 'macroEstimation',
+    location: 'Nutrition tab → Create Custom Meal',
+  },
+  {
+    id: 'photo-detection',
+    name: 'AI Photo Detection',
+    description: 'Snap a photo of your meal and let AI detect the food and estimate macros',
+    icon: 'camera.fill',
+    tier: 'pro',
+    featureKey: 'macroEstimation',
+    location: 'Nutrition tab → Search Foods → Auto-detect',
+  },
+  {
+    id: 'workout-plans',
+    name: 'AI Workout Plans',
+    description: 'Create custom workout programs based on your goals, experience, and past workouts',
+    icon: 'dumbbell.fill',
+    tier: 'pro',
+    featureKey: 'workoutPlan',
+    location: 'Workout tab → Workout Plan Generator',
+  },
+  {
+    id: 'exercise-suggestions',
+    name: 'AI Exercise Suggestions',
+    description: 'Get smart exercise recommendations as you build your workout',
+    icon: 'figure.strengthtraining.traditional',
+    tier: 'pro',
+    featureKey: 'workoutTips',
+    location: 'Workout tab → Exercise Builder',
+  },
+  {
+    id: 'progress-insights',
+    name: 'AI Progress Insights',
+    description: 'Get personalized analysis of your training trends and weak points',
+    icon: 'chart.line.uptrend.xyaxis',
+    tier: 'pro',
+    featureKey: 'workoutTips',
+    location: 'Progress tab → Trends/Insights',
+  },
+  {
+    id: 'goal-analysis',
+    name: 'AI Goal Recalibration',
+    description: 'Analyze your progress and get realistic timelines, PR predictions, and goal adjustments',
+    icon: 'target',
+    tier: 'pro',
+    featureKey: 'workoutTips',
+    location: 'Profile/Progress → Re-evaluate Goals',
+  },
+];
 
 export const FeatureLadderModal: React.FC<FeatureLadderModalProps> = ({
   visible,
-  totalPoints,
-  isFeatureUnlocked,
-  nextUnlock,
   onClose,
-  onFeatureClick,
-  isCoach = false,
+  onViewPlans,
 }) => {
-  // For coaches: only show the 3 specified features (custom meal ideas, workout ideas, advanced AI insights)
-  // For players: show all features (but these 3 are auto-unlocked)
-  const coachOnlyFeatures = ['nutrition_meal_ideas', 'workout_ideas', 'advanced_insights'];
+  const { tier, canUseAI, getRemainingUsage } = useSubscriptionStore();
   
-  const getFeaturesToShow = () => {
-    if (isCoach) {
-      // Only show the 3 features for coaches
-      return Object.entries(FEATURE_CATALOG).filter(([feature]) => 
-        coachOnlyFeatures.includes(feature)
+  const handleFeaturePress = (feature: AIFeature) => {
+    if (!canUseAI(feature.featureKey)) {
+      Alert.alert(
+        '🔒 AI Feature Locked',
+        `${feature.name} requires a ${feature.tier === 'elite' ? 'Elite' : 'Pro'} subscription.\n\n${feature.tier === 'elite' ? 'Upgrade to Elite for unlimited AI access!' : 'Upgrade to Pro for monthly AI limits, or Elite for unlimited access!'}`,
+        [
+          {
+            text: '🚀 View Plans',
+            onPress: () => {
+              onClose();
+              if (onViewPlans) {
+                onViewPlans();
+              }
+            },
+            style: 'default' as const,
+          },
+          { text: 'Cancel', style: 'cancel' as const },
+        ]
       );
+      return;
     }
-    // For players, show all features
-    return Object.entries(FEATURE_CATALOG);
+    
+    // Feature is unlocked - could navigate to the feature or just close
+    onClose();
   };
-  
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
+      onRequestClose={onClose}
     >
       <View style={styles.modalContainer}>
         <View style={styles.modalHeader}>
@@ -53,91 +147,178 @@ export const FeatureLadderModal: React.FC<FeatureLadderModalProps> = ({
           >
             <Text style={styles.cancelButtonText}>Close</Text>
           </TouchableOpacity>
-          <Text style={styles.modalTitle}>Feature Ladder</Text>
+          <View style={styles.headerCenter}>
+            <View style={[styles.headerIconContainer, { backgroundColor: BrandColors.accent + '20' }]}>
+              <IconSymbol name="sparkles" size={24} color={BrandColors.accent} />
+            </View>
+            <Text style={styles.modalTitle}>AI Features</Text>
+          </View>
           <View style={styles.headerSpacer} />
         </View>
         
         <ScrollView 
           style={styles.modalContent}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          scrollEventThrottle={16}
+          contentContainerStyle={styles.scrollContent}
         >
-          <View style={styles.ladderContainer}>
-            <Text style={styles.ladderTitle}>Unlock Features with V</Text>
-            <Text style={styles.ladderSubtitle}>Your current balance: {totalPoints.toLocaleString()} V</Text>
-            {isCoach && (
-              <Text style={[styles.ladderSubtitle, { marginTop: 8, fontStyle: 'italic', color: BrandColors.accent }]}>
-                Coach features - All unlocked automatically
-              </Text>
-            )}
-            
-            {getFeaturesToShow()
-              .sort(([, a], [, b]) => a - b)
-              .map(([feature, points]) => {
-                const isUnlocked = isFeatureUnlocked(feature);
-                const isNext = nextUnlock && nextUnlock[0] === feature;
-                const pointsNeeded = Math.max(0, points - totalPoints);
-                const progressPercentage = Math.min((totalPoints / points) * 100, 100);
-                
-                return (
-                  <TouchableOpacity 
-                    key={feature} 
-                    style={[
-                      styles.ladderItem,
-                      { 
-                        borderColor: isUnlocked ? BrandColors.success : isNext ? BrandColors.accent : BrandColors.gray700,
-                        backgroundColor: isUnlocked ? BrandColors.success + '20' : isNext ? BrandColors.accent + '20' : 'transparent'
-                      }
-                    ]}
-                    onPress={() => onFeatureClick(feature, points)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.ladderItemHeader}>
-                      <Text style={[
-                        styles.ladderFeatureName,
-                        { color: isUnlocked ? BrandColors.success : BrandColors.text }
-                      ]}>
-                        {getFeatureDisplayName(feature)}
-                      </Text>
-                      <Text style={[
-                        styles.ladderPoints,
-                        { color: isUnlocked ? BrandColors.success : BrandColors.accent }
-                      ]}>
-                        {points.toLocaleString()} V
-                      </Text>
-                    </View>
-                    
-                    {/* Progress Bar */}
-                    {!isUnlocked && (
-                      <View style={styles.progressBarContainer}>
-                        <View style={styles.ladderProgressBar}>
-                          <View 
-                            style={[
-                              styles.ladderProgressFill, 
-                              { 
-                                backgroundColor: BrandColors.accent,
-                                width: `${progressPercentage}%`
-                              }
-                            ]} 
-                          />
-                        </View>
-                        <Text style={styles.ladderProgressText}>
-                          {Math.round(progressPercentage)}% complete
-                        </Text>
+          {/* Current Tier Badge */}
+          <View style={[styles.tierBadge, {
+            backgroundColor: 
+              tier === 'elite' ? BrandColors.accent + '20' :
+              tier === 'pro' ? BrandColors.info + '20' :
+              BrandColors.gray800,
+            borderColor:
+              tier === 'elite' ? BrandColors.accent :
+              tier === 'pro' ? BrandColors.info :
+              BrandColors.gray700,
+          }]}>
+            <IconSymbol 
+              name={tier === 'elite' ? 'crown.fill' : tier === 'pro' ? 'star.fill' : 'bolt.fill'} 
+              size={18} 
+              color={
+                tier === 'elite' ? BrandColors.accent :
+                tier === 'pro' ? BrandColors.info :
+                BrandColors.textSecondary
+              } 
+            />
+            <Text style={[styles.tierBadgeText, {
+              color:
+                tier === 'elite' ? BrandColors.accent :
+                tier === 'pro' ? BrandColors.info :
+                BrandColors.textSecondary
+            }]}>
+              {tier === 'elite' ? 'Elite - Unlimited AI' :
+               tier === 'pro' ? 'Pro - Monthly Limits' :
+               'Basic - No AI Features'}
+            </Text>
+          </View>
+
+          {/* Description */}
+          <Text style={[styles.description, { color: BrandColors.textSecondary }]}>
+            AI powers every aspect of your fitness journey. Select a feature to see where it's used in the app.
+          </Text>
+
+          {/* AI Features List */}
+          {AI_FEATURES.map((feature) => {
+            const isUnlocked = canUseAI(feature.featureKey);
+            const remaining = isUnlocked ? getRemainingUsage(feature.featureKey) : 0;
+            const isElite = tier === 'elite';
+            const isPro = tier === 'pro' && isUnlocked;
+
+            return (
+              <TouchableOpacity
+                key={feature.id}
+                style={[
+                  styles.featureCard,
+                  {
+                    backgroundColor: isUnlocked ? BrandColors.surface : BrandColors.gray900,
+                    borderColor: isUnlocked 
+                      ? (tier === 'elite' ? BrandColors.accent : BrandColors.info)
+                      : BrandColors.gray700,
+                    borderWidth: isUnlocked ? 2 : 1,
+                    opacity: isUnlocked ? 1 : 0.7,
+                  },
+                ]}
+                onPress={() => handleFeaturePress(feature)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.featureHeader}>
+                  <View style={[
+                    styles.iconContainer,
+                    {
+                      backgroundColor: isUnlocked
+                        ? (tier === 'elite' ? BrandColors.accent + '20' : BrandColors.info + '20')
+                        : BrandColors.gray800,
+                    },
+                  ]}>
+                    {isUnlocked ? (
+                      <IconSymbol 
+                        name={feature.icon as any} 
+                        size={24} 
+                        color={tier === 'elite' ? BrandColors.accent : BrandColors.info} 
+                      />
+                    ) : (
+                      <IconSymbol name="lock.fill" size={24} color={BrandColors.textSecondary} />
+                    )}
+                    {isUnlocked && (
+                      <View style={[styles.sparkleBadge, { backgroundColor: BrandColors.accent }]}>
+                        <IconSymbol name="sparkles" size={10} color={BrandColors.background} />
                       </View>
                     )}
-                    
-                    <Text style={[
-                      styles.ladderStatus,
-                      { color: isUnlocked ? BrandColors.success : BrandColors.textSecondary }
-                    ]}>
-                      {isUnlocked ? '✓ Unlocked - Tap to View' : isNext ? '→ Next to unlock' : `${pointsNeeded.toLocaleString()} V to go`}
+                  </View>
+
+                  <View style={styles.featureInfo}>
+                    <View style={styles.featureTitleRow}>
+                      <Text style={[
+                        styles.featureName,
+                        { color: isUnlocked ? BrandColors.text : BrandColors.textSecondary },
+                      ]}>
+                        {feature.name}
+                      </Text>
+                      {isUnlocked && (
+                        <View style={[
+                          styles.unlockedBadge,
+                          { backgroundColor: tier === 'elite' ? BrandColors.accent + '20' : BrandColors.info + '20' },
+                        ]}>
+                          <Text style={[
+                            styles.unlockedBadgeText,
+                            { color: tier === 'elite' ? BrandColors.accent : BrandColors.info },
+                          ]}>
+                            {isElite ? '∞ Unlimited' : `${remaining} left`}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[styles.featureDescription, { color: BrandColors.textSecondary }]}>
+                      {feature.description}
                     </Text>
-                  </TouchableOpacity>
-                );
-              })}
-          </View>
+                    <View style={styles.featureLocation}>
+                      <IconSymbol name="location.fill" size={12} color={BrandColors.textSecondary} />
+                      <Text style={[styles.locationText, { color: BrandColors.textSecondary }]}>
+                        {feature.location}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {!isUnlocked && (
+                  <View style={[styles.lockedFooter, { backgroundColor: BrandColors.gray900 }]}>
+                    <IconSymbol name="lock.fill" size={14} color={BrandColors.textSecondary} />
+                    <Text style={[styles.lockedText, { color: BrandColors.textSecondary }]}>
+                      Requires {feature.tier === 'elite' ? 'Elite' : 'Pro'} tier
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Upgrade CTA */}
+          {(tier === 'basic' || tier === 'free') && (
+            <TouchableOpacity
+              style={[styles.upgradeCard, { backgroundColor: BrandColors.accent + '20', borderColor: BrandColors.accent }]}
+              onPress={() => {
+                onClose();
+                if (onViewPlans) {
+                  onViewPlans();
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <IconSymbol name="sparkles" size={32} color={BrandColors.accent} />
+              <Text style={[styles.upgradeTitle, { color: BrandColors.accent }]}>
+                Unlock All AI Features
+              </Text>
+              <Text style={[styles.upgradeDescription, { color: BrandColors.textSecondary }]}>
+                Upgrade to Pro or Elite to access all AI-powered features and transform your fitness journey
+              </Text>
+              <View style={[styles.upgradeButton, { backgroundColor: BrandColors.accent }]}>
+                <Text style={[styles.upgradeButtonText, { color: BrandColors.background }]}>
+                  View Plans & Pricing
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
         </ScrollView>
       </View>
     </Modal>
@@ -168,83 +349,172 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.sm,
     fontFamily: Typography.fontFamily,
   },
-  headerSpacer: {
-    width: 60,
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  headerIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalTitle: {
     color: BrandColors.text,
-    fontSize: Typography.fontSize.lg,
-    fontWeight: Typography.fontWeight.semibold,
+    fontSize: Typography.fontSize.xl,
+    fontWeight: Typography.fontWeight.bold,
     fontFamily: Typography.fontFamily,
+  },
+  headerSpacer: {
+    width: 60,
   },
   modalContent: {
     flex: 1,
-    paddingHorizontal: Spacing.lg,
   },
-  ladderContainer: {
+  scrollContent: {
     padding: Spacing.lg,
+    paddingBottom: Spacing.xxl,
   },
-  ladderTitle: {
-    color: BrandColors.text,
-    fontSize: Typography.fontSize['2xl'],
+  tierBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+    marginBottom: Spacing.lg,
+    alignSelf: 'center',
+  },
+  tierBadgeText: {
+    fontSize: Typography.fontSize.base,
     fontWeight: Typography.fontWeight.bold,
     fontFamily: Typography.fontFamily,
-    marginBottom: Spacing.xs,
-    textAlign: 'center',
   },
-  ladderSubtitle: {
-    color: BrandColors.textSecondary,
-    fontSize: Typography.fontSize.base,
+  description: {
+    fontSize: Typography.fontSize.sm,
     fontFamily: Typography.fontFamily,
-    marginBottom: Spacing.xl,
+    lineHeight: 20,
     textAlign: 'center',
+    marginBottom: Spacing.xl,
+    paddingHorizontal: Spacing.md,
   },
-  ladderItem: {
-    borderWidth: 2,
-    borderRadius: BorderRadius.md,
+  featureCard: {
+    borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
     marginBottom: Spacing.md,
   },
-  ladderItemHeader: {
+  featureHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.xs,
+    gap: Spacing.md,
   },
-  ladderFeatureName: {
-    fontSize: Typography.fontSize.lg,
-    fontWeight: Typography.fontWeight.semibold,
-    fontFamily: Typography.fontFamily,
+  iconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  sparkleBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: BrandColors.background,
+  },
+  featureInfo: {
     flex: 1,
   },
-  ladderPoints: {
+  featureTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.xs,
+    gap: Spacing.sm,
+  },
+  featureName: {
     fontSize: Typography.fontSize.lg,
     fontWeight: Typography.fontWeight.bold,
     fontFamily: Typography.fontFamily,
+    flex: 1,
   },
-  progressBarContainer: {
-    marginVertical: Spacing.sm,
+  unlockedBadge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
   },
-  ladderProgressBar: {
-    height: 8,
-    backgroundColor: BrandColors.gray800,
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: Spacing.xs,
+  unlockedBadgeText: {
+    fontSize: Typography.fontSize.xs,
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
   },
-  ladderProgressFill: {
-    height: '100%',
-    borderRadius: 4,
+  featureDescription: {
+    fontSize: Typography.fontSize.sm,
+    fontFamily: Typography.fontFamily,
+    lineHeight: 18,
+    marginBottom: Spacing.sm,
   },
-  ladderProgressText: {
-    color: BrandColors.textSecondary,
+  featureLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: Spacing.xs,
+  },
+  locationText: {
     fontSize: Typography.fontSize.xs,
     fontFamily: Typography.fontFamily,
-    textAlign: 'center',
+    fontStyle: 'italic',
   },
-  ladderStatus: {
+  lockedFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: Spacing.md,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    alignSelf: 'flex-start',
+  },
+  lockedText: {
+    fontSize: Typography.fontSize.xs,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+  },
+  upgradeCard: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    marginTop: Spacing.lg,
+    borderWidth: 2,
+  },
+  upgradeTitle: {
+    fontSize: Typography.fontSize.xl,
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.xs,
+  },
+  upgradeDescription: {
     fontSize: Typography.fontSize.sm,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: Spacing.lg,
+  },
+  upgradeButton: {
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+  },
+  upgradeButtonText: {
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.bold,
     fontFamily: Typography.fontFamily,
   },
 });
-

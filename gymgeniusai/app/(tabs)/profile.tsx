@@ -12,7 +12,17 @@ import { userService } from '@/services/firestoreService';
 import { usePointsStore } from '@/stores/pointsStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { useWorkoutStore } from '@/stores/workoutStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { eventBus } from '@/lib/eventBus';
+import ProgressScreen from './progress';
+import StoreScreen from './store';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { AIGoalRecalibration } from '@/components/progress/AIGoalRecalibration';
+import { useProgressStore } from '@/stores/progressStore';
+import { useWeightStore } from '@/stores/weightStore';
+import { authService } from '@/services/authService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type ProfileActionCardProps = {
   title: string;
@@ -24,7 +34,9 @@ type ProfileActionCardProps = {
 
 const ProfileActionCard = ({ title, description, icon, onPress, footer }: ProfileActionCardProps) => (
   <TouchableOpacity style={styles.actionCard} onPress={onPress} activeOpacity={0.85}>
-    <Text style={[styles.actionIcon, { color: BrandColors.accent }]}>{icon}</Text>
+    <View style={styles.actionIconContainer}>
+      <IconSymbol name={icon as any} size={24} color={BrandColors.accent} />
+    </View>
     <Text style={[styles.actionTitle, { color: BrandColors.text }]}>{title}</Text>
     <Text style={[styles.actionDescription, { color: BrandColors.textSecondary }]}>{description}</Text>
     {footer ? (
@@ -43,14 +55,20 @@ const MetricTile = ({ label, value }: MetricTileProps) => (
 );
 
 export default function ProfileScreen() {
-  const { profile, setProfile, clearProfile, syncProfileToFirestore } = useUserStore();
+  const { profile, setProfile, clearProfile, syncProfileToFirestore, userDoc } = useUserStore();
   const { user, signOut } = useAuth();
   const { setData, setCurrentStep } = useOnboardingStore();
+  const insets = useSafeAreaInsets();
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showGoalEditor, setShowGoalEditor] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
+  const [showStore, setShowStore] = useState(false);
   const { totalPoints } = usePointsStore();
   const { favorites } = useFavoritesStore();
   const { workoutHistory } = useWorkoutStore();
+  const { tier, getRemainingUsage } = useSubscriptionStore();
+  const { dailyWeights } = useWeightStore();
+  const { calculateTrendData, calculatePersonalRecords } = useProgressStore();
 
   const selectedGoalsText = useMemo(() => {
     if (profile?.goals && profile.goals.length > 0) {
@@ -82,31 +100,146 @@ export default function ProfileScreen() {
 
   const handleEditGoals = () => {
     if (profile) {
-      setData(profile);
+      // Ensure goals array is properly initialized from profile
+      // Use the existing goals array if it exists and has items, otherwise initialize from primaryGoal
+      const goalsArray = profile.goals && Array.isArray(profile.goals) && profile.goals.length > 0 
+        ? profile.goals 
+        : profile.primaryGoal 
+          ? [profile.primaryGoal] 
+          : [];
+      
+      const profileData = {
+        ...profile,
+        goals: goalsArray,
+      };
+      
+      console.log('🎯 Loading goals for editing:', {
+        profileGoals: profile.goals,
+        primaryGoal: profile.primaryGoal,
+        initializedGoals: goalsArray,
+      });
+      
+      setData(profileData);
     }
-    setCurrentStep(5);
+    setCurrentStep(6); // Step 6 is Goals (was incorrectly set to 5 which is Experience)
     setShowGoalEditor(true);
   };
 
   const handleSaveProfile = async () => {
     try {
+      if (!user) {
+        Alert.alert('Error', 'You must be logged in to save your profile.');
+        return;
+      }
+
       // Get the updated data from onboarding store
       const { data } = useOnboardingStore.getState();
       
+      // Merge with existing profile to ensure all fields are present
+      const profileToSave = {
+        ...profile,
+        ...data,
+        // Ensure required fields are present
+        firstName: data.firstName || profile?.firstName || '',
+        height: data.height?.value ? data.height : profile?.height || { value: '', unit: 'ft/in' },
+        weight: data.weight?.value ? data.weight : profile?.weight || { value: '', unit: 'lb' },
+      };
+      
+      console.log('💾 Saving profile:', {
+        hasFirstName: !!profileToSave.firstName,
+        hasHeight: !!profileToSave.height?.value,
+        hasWeight: !!profileToSave.weight?.value,
+        goals: profileToSave.goals,
+        goalsCount: profileToSave.goals?.length || 0,
+      });
+      
+      // Check if goals have changed
+      const currentGoals = Array.isArray(profile?.goals) ? [...profile.goals].sort() : [];
+      const newGoals = Array.isArray(profileToSave.goals) ? [...profileToSave.goals].sort() : [];
+      const goalsChanged = JSON.stringify(currentGoals) !== JSON.stringify(newGoals);
+      
       // Save to user store (local storage)
-      await setProfile(data);
+      await setProfile(profileToSave);
       
       // Save to Firebase if user is authenticated
-      if (user) {
-        await syncProfileToFirestore(user.uid, data);
+      if (user && syncProfileToFirestore && typeof syncProfileToFirestore === 'function') {
+        console.log('🔥 Syncing profile to Firestore...');
+        try {
+          await syncProfileToFirestore(user.uid, profileToSave);
+          console.log('✅ Profile synced to Firestore successfully');
+        } catch (syncError: any) {
+          console.error('❌ Error syncing to Firestore:', syncError);
+          // Continue even if Firestore sync fails - local save already succeeded
+        }
+      } else if (user && !syncProfileToFirestore) {
+        console.warn('⚠️ syncProfileToFirestore is not available, skipping Firestore sync');
+      }
+      
+      // Auto-recalculate macros if goals changed and user has required data
+      if (goalsChanged && user && profileToSave.height?.value && profileToSave.weight?.value) {
+        try {
+          console.log('🧮 Auto-recalculating macro targets due to goals change...');
+          
+          // Use the updated profile data for calculation
+          const macroCalculation = calculatePersonalizedMacros(profileToSave);
+          
+          // Save to Firebase
+          await userService.updateUser(user.uid, {
+            customMacroTargets: {
+              calories: macroCalculation.targets.calories,
+              protein: macroCalculation.targets.protein,
+              carbs: macroCalculation.targets.carbs,
+              fat: macroCalculation.targets.fat,
+              bmr: macroCalculation.breakdown.bmr,
+              tdee: macroCalculation.breakdown.tdee,
+              activityMultiplier: macroCalculation.breakdown.activityMultiplier,
+              calculatedAt: macroCalculation.lastCalculated,
+              basedOnWeight: macroCalculation.basedOn.weight,
+              basedOnGoal: macroCalculation.basedOn.goal,
+            },
+          });
+          
+          // Update nutrition store with new targets
+          const nutritionStore = useNutritionStore.getState();
+          if (nutritionStore && typeof nutritionStore.setPersonalizedTargets === 'function') {
+            nutritionStore.setPersonalizedTargets(macroCalculation.targets);
+          }
+          
+          // Refresh current day nutrition to use new targets
+          if (nutritionStore && typeof nutritionStore.getDailyNutrition === 'function' && nutritionStore.selectedDate) {
+            try {
+              const selectedDate = nutritionStore.selectedDate;
+              const getDailyNutrition = nutritionStore.getDailyNutrition;
+              // Ensure selectedDate is a valid Date object
+              const dateToUse = selectedDate instanceof Date ? selectedDate : new Date();
+              const updatedDayNutrition = getDailyNutrition(dateToUse);
+              if (updatedDayNutrition) {
+                useNutritionStore.setState({ currentDayNutrition: updatedDayNutrition });
+              }
+            } catch (refreshError) {
+              console.error('❌ Error refreshing daily nutrition:', refreshError);
+              // Don't block profile save if refresh fails
+            }
+          }
+          
+          console.log('✅ Macros auto-recalculated and saved');
+        } catch (macroError) {
+          console.error('❌ Error auto-recalculating macros:', macroError);
+          // Don't block profile save if macro recalculation fails
+        }
       }
       
       setShowEditProfile(false);
       setShowGoalEditor(false);
       Alert.alert('Success', 'Profile updated successfully!');
     } catch (error: any) {
-      console.error('Error saving profile:', error);
-      Alert.alert('Error', 'Failed to save profile. Please try again.');
+      console.error('❌ Error saving profile:', error);
+      console.error('❌ Error message:', error?.message);
+      console.error('❌ Error code:', error?.code);
+      console.error('❌ Error stack:', error?.stack);
+      
+      const errorMessage = error?.message || 'Unknown error occurred';
+      Alert.alert('Error', `Failed to save profile: ${errorMessage}`);
     }
   };
 
@@ -142,12 +275,27 @@ export default function ProfileScreen() {
       });
       
       // Update nutrition store with new targets
-      useNutritionStore.getState().setPersonalizedTargets(macroCalculation.targets);
+      const nutritionStore = useNutritionStore.getState();
+      if (nutritionStore && typeof nutritionStore.setPersonalizedTargets === 'function') {
+        nutritionStore.setPersonalizedTargets(macroCalculation.targets);
+      }
       
       // Refresh current day nutrition to use new targets
-      const { selectedDate, getDailyNutrition } = useNutritionStore.getState();
-      const updatedDayNutrition = getDailyNutrition(selectedDate);
-      useNutritionStore.setState({ currentDayNutrition: updatedDayNutrition });
+      if (nutritionStore && typeof nutritionStore.getDailyNutrition === 'function' && nutritionStore.selectedDate) {
+        try {
+          const selectedDate = nutritionStore.selectedDate;
+          const getDailyNutrition = nutritionStore.getDailyNutrition;
+          // Ensure selectedDate is a valid Date object
+          const dateToUse = selectedDate instanceof Date ? selectedDate : new Date();
+          const updatedDayNutrition = getDailyNutrition(dateToUse);
+          if (updatedDayNutrition) {
+            useNutritionStore.setState({ currentDayNutrition: updatedDayNutrition });
+          }
+        } catch (refreshError) {
+          console.error('❌ Error refreshing daily nutrition:', refreshError);
+          // Don't block macro recalculation if refresh fails
+        }
+      }
       
       Alert.alert(
         'Macros Updated!', 
@@ -188,6 +336,56 @@ export default function ProfileScreen() {
     );
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to delete your account? This action cannot be undone.\n\nThis will permanently delete:\n• Your email and password\n• All workouts, meals, and cardio logs\n• All points earned\n• All saved data and preferences',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Yes, Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Show loading state
+              Alert.alert('Deleting Account', 'Please wait while we delete your account and all data...');
+              
+              // Delete account and all data
+              await authService.deleteAccount();
+              
+              // Clear all local storage
+              try {
+                await AsyncStorage.clear();
+              } catch (storageError) {
+                console.warn('⚠️ Error clearing AsyncStorage:', storageError);
+              }
+              
+              // Clear all stores
+              clearProfile();
+              
+              // Navigate to sign in
+              router.replace('/auth/signin');
+              
+              Alert.alert(
+                'Account Deleted',
+                'Your account and all associated data have been permanently deleted.'
+              );
+            } catch (error: any) {
+              console.error('❌ Error deleting account:', error);
+              Alert.alert(
+                'Error',
+                error.message || 'Failed to delete account. Please try again or contact support if the issue persists.'
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const initials = useMemo(() => {
     const name = profile?.firstName || user?.displayName || user?.email || 'You';
     return name
@@ -214,14 +412,14 @@ export default function ProfileScreen() {
       return state.getTargets();
     }
     return state.personalizedTargets;
-  }) || profile?.customMacroTargets;
+  }) || userDoc?.customMacroTargets;
 
   const playsSports = profile?.playsSports === true || profile?.sport || profile?.teamName;
 
   return (
     <ScrollView style={ComponentStyles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.heroCard}>
-        <View style={[styles.avatar, { backgroundColor: BrandColors.accent + '30' }]}>
+        <View style={[styles.avatar, { backgroundColor: BrandColors.accent + '20', borderColor: BrandColors.accent + '60' }]}>
           <Text style={[styles.avatarText, { color: BrandColors.accent }]}>{initials}</Text>
         </View>
         <View style={styles.heroInfo}>
@@ -230,25 +428,60 @@ export default function ProfileScreen() {
           </Text>
           <View style={styles.heroStatsRow}>
             <View style={styles.heroStat}>
+              <IconSymbol name="bolt.fill" size={18} color={BrandColors.accent} />
               <Text style={[styles.heroStatValue, { color: BrandColors.accent }]}>{totalPoints}</Text>
-              <Text style={[styles.heroStatLabel, { color: BrandColors.textSecondary }]}>Total Points</Text>
+              <Text style={[styles.heroStatLabel, { color: BrandColors.textSecondary }]}>Volts</Text>
             </View>
             <View style={styles.heroStat}>
+              <IconSymbol name="figure.strengthtraining.traditional" size={18} color={BrandColors.accent} />
               <Text style={[styles.heroStatValue, { color: BrandColors.accent }]}>
                 {workoutHistory?.length || 0}
               </Text>
-              <Text style={[styles.heroStatLabel, { color: BrandColors.textSecondary }]}>Workouts Logged</Text>
+              <Text style={[styles.heroStatLabel, { color: BrandColors.textSecondary }]}>Workouts</Text>
             </View>
           </View>
-          {lastWorkout && (
-            <Text style={[styles.lastWorkoutText, { color: BrandColors.textSecondary }]}>
-              Last workout: {lastWorkout.title || 'Workout'} on{' '}
-              {new Date(lastWorkout.date || lastWorkout.createdAt || Date.now()).toLocaleDateString()}
+          {/* Subscription Tier Badge - HIDDEN for v1.0 App Store submission */}
+          {/* <View style={[styles.tierBadge, { 
+            backgroundColor: tier === 'elite' ? BrandColors.accent + '20' : 
+                            tier === 'pro' ? BrandColors.info + '20' : 
+                            tier === 'basic' ? BrandColors.success + '20' : 
+                            BrandColors.gray800,
+            borderColor: tier === 'elite' ? BrandColors.accent : 
+                        tier === 'pro' ? BrandColors.info : 
+                        tier === 'basic' ? BrandColors.success : 
+                        BrandColors.gray700,
+          }]}>
+            <IconSymbol 
+              name={tier === 'elite' ? 'sparkles' : tier === 'pro' ? 'star.fill' : tier === 'basic' ? 'bolt.fill' : 'lock.fill'} 
+              size={14} 
+              color={tier === 'elite' ? BrandColors.accent : tier === 'pro' ? BrandColors.info : tier === 'basic' ? BrandColors.success : BrandColors.textSecondary} 
+            />
+            <Text style={[styles.tierBadgeText, { 
+              color: tier === 'elite' ? BrandColors.accent : 
+                     tier === 'pro' ? BrandColors.info : 
+                     tier === 'basic' ? BrandColors.success : 
+                     BrandColors.textSecondary 
+            }]}>
+              {tier === 'elite' ? 'Elite' : tier === 'pro' ? 'Pro' : tier === 'basic' ? 'Basic' : 'Free'} Tier
             </Text>
+            {tier === 'pro' && (
+              <Text style={[styles.tierBadgeSubtext, { color: BrandColors.textSecondary }]}>
+                {getRemainingUsage('mealPlan')} meal plans left
+              </Text>
+            )}
+          </View> */}
+          {lastWorkout && (
+            <View style={styles.lastWorkoutContainer}>
+              <IconSymbol name="flame.fill" size={14} color={BrandColors.accent} />
+              <Text style={[styles.lastWorkoutText, { color: BrandColors.textSecondary }]}>
+                Last workout: {lastWorkout.title || 'Workout'} on{' '}
+                {new Date(lastWorkout.date || lastWorkout.createdAt || Date.now()).toLocaleDateString()}
+              </Text>
+            </View>
           )}
         </View>
         <TouchableOpacity style={styles.editHeroButton} onPress={handleEditProfile} activeOpacity={0.85}>
-          <Text style={[styles.editHeroButtonText, { color: '#000' }]}>✎</Text>
+          <IconSymbol name="pencil" size={18} color="#000" />
         </TouchableOpacity>
       </View>
 
@@ -256,28 +489,50 @@ export default function ProfileScreen() {
         <ProfileActionCard
           title="Update Goals"
           description="Adjust your focus & schedule"
-          icon="🎯"
+          icon="target"
           onPress={handleEditGoals}
           footer={selectedGoalsText ? `Selected: ${selectedGoalsText}` : 'Selected: Not set'}
         />
         <ProfileActionCard
-          title="Manage Communities"
-          description="Teams & personal groups"
-          icon="🤝"
-          onPress={() => router.push('/(tabs)/community')}
+          title="Progress"
+          description="Track your fitness journey"
+          icon="chart.line.uptrend.xyaxis"
+          onPress={() => setShowProgress(true)}
         />
         <ProfileActionCard
-          title="Support"
-          description="Get help or share feedback"
-          icon="💬"
-          onPress={() => Alert.alert('Support', 'Need help? Email support@gymgenius.ai')}
+          title="Rewards"
+          description="Redeem your points for upgrades & perks"
+          icon="cart.fill"
+          onPress={() => setShowStore(true)}
         />
       </View>
+      
+      {/* AI Goal Recalibration - Placed outside actionRow to avoid layout conflicts */}
+      {selectedGoalsText && workoutHistory && workoutHistory.length > 0 && (
+        <View style={{ marginTop: Spacing.md }}>
+          <AIGoalRecalibration
+            userGoals={profile?.goals && profile.goals.length > 0 
+              ? profile.goals 
+              : profile?.primaryGoal 
+                ? [profile.primaryGoal] 
+                : []}
+            personalRecords={calculatePersonalRecords(workoutHistory)}
+            trendData={calculateTrendData(workoutHistory, '4W')}
+            weightHistory={dailyWeights?.map(w => ({ date: w.date, weight: w.weight }))}
+          />
+        </View>
+      )}
 
       <View style={[ComponentStyles.card, styles.snapshotCard]}>
-        <Text style={[styles.cardTitle, { color: BrandColors.text }]}>Training Summary</Text>
+        <View style={styles.cardTitleRow}>
+          <IconSymbol name="figure.strengthtraining.traditional" size={20} color={BrandColors.accent} />
+          <Text style={[styles.cardTitle, { color: BrandColors.text }]}>Training Summary</Text>
+        </View>
         <View style={styles.snapshotRow}>
-          <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Primary Goal</Text>
+          <View style={styles.snapshotLabelContainer}>
+            <IconSymbol name="target" size={14} color={BrandColors.textSecondary} />
+            <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Primary Goal</Text>
+          </View>
           <Text style={[styles.snapshotValue, { color: BrandColors.text }]}>
             {profile?.goals && profile.goals.length > 0
               ? profile.goals
@@ -293,7 +548,10 @@ export default function ProfileScreen() {
           </Text>
         </View>
         <View style={styles.snapshotRow}>
-          <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Experience</Text>
+          <View style={styles.snapshotLabelContainer}>
+            <IconSymbol name="star.fill" size={14} color={BrandColors.textSecondary} />
+            <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Experience</Text>
+          </View>
           <Text style={[styles.snapshotValue, { color: BrandColors.text }]}>
             {profile?.exerciseExperience
               ? profile.exerciseExperience.charAt(0).toUpperCase() + profile.exerciseExperience.slice(1)
@@ -301,7 +559,10 @@ export default function ProfileScreen() {
           </Text>
         </View>
         <View style={styles.snapshotRow}>
-          <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Weekly Schedule</Text>
+          <View style={styles.snapshotLabelContainer}>
+            <IconSymbol name="calendar" size={14} color={BrandColors.textSecondary} />
+            <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Weekly Schedule</Text>
+          </View>
           <Text style={[styles.snapshotValue, { color: BrandColors.text }]}>
             {profile?.weeklySchedule ? `${profile.weeklySchedule} days / week` : 'Not set'}
           </Text>
@@ -309,7 +570,10 @@ export default function ProfileScreen() {
       </View>
 
       <View style={[ComponentStyles.card, styles.snapshotCard]}>
-        <Text style={[styles.cardTitle, { color: BrandColors.text }]}>Health Metrics</Text>
+        <View style={styles.cardTitleRow}>
+          <IconSymbol name="chart.bar.fill" size={20} color={BrandColors.accent} />
+          <Text style={[styles.cardTitle, { color: BrandColors.text }]}>Health Metrics</Text>
+        </View>
         <View style={styles.metricsGrid}>
           <MetricTile label="Height" value={profile?.height?.value ? `${profile.height.value} ${profile.height.unit}` : '—'} />
           <MetricTile label="Weight" value={profile?.weight?.value ? `${profile.weight.value} ${profile.weight.unit}` : '—'} />
@@ -318,32 +582,37 @@ export default function ProfileScreen() {
           <MetricTile label="Carbs" value={macroTargets?.carbs ? `${macroTargets.carbs} g` : '—'} />
           <MetricTile label="Fat" value={macroTargets?.fat ? `${macroTargets.fat} g` : '—'} />
         </View>
-        <TouchableOpacity
-          style={[styles.recalculateButton, { backgroundColor: BrandColors.accent }]}
-          onPress={handleRecalculateMacros}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.recalculateButtonText, { color: '#000' }]}>🧮 Recalculate Nutrition Targets</Text>
-        </TouchableOpacity>
       </View>
 
       {playsSports ? (
         <View style={[ComponentStyles.card, styles.snapshotCard]}>
-          <Text style={[styles.cardTitle, { color: BrandColors.text }]}>Sports & Teams</Text>
+          <View style={styles.cardTitleRow}>
+            <IconSymbol name="sportscourt.fill" size={20} color={BrandColors.accent} />
+            <Text style={[styles.cardTitle, { color: BrandColors.text }]}>Sports & Teams</Text>
+          </View>
           <View style={styles.snapshotRow}>
-            <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Sport</Text>
+            <View style={styles.snapshotLabelContainer}>
+              <IconSymbol name="figure.run" size={14} color={BrandColors.textSecondary} />
+              <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Sport</Text>
+            </View>
             <Text style={[styles.snapshotValue, { color: BrandColors.text }]}>
               {profile?.sport || 'Not set'}
             </Text>
           </View>
           <View style={styles.snapshotRow}>
-            <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Team</Text>
+            <View style={styles.snapshotLabelContainer}>
+              <IconSymbol name="person.3.fill" size={14} color={BrandColors.textSecondary} />
+              <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Team</Text>
+            </View>
             <Text style={[styles.snapshotValue, { color: BrandColors.text }]}>
               {profile?.teamName || 'Not set'}
             </Text>
           </View>
           <View style={styles.snapshotRow}>
-            <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Plays Sports</Text>
+            <View style={styles.snapshotLabelContainer}>
+              <IconSymbol name="checkmark.circle.fill" size={14} color={BrandColors.textSecondary} />
+              <Text style={[styles.snapshotLabel, { color: BrandColors.textSecondary }]}>Plays Sports</Text>
+            </View>
             <Text style={[styles.snapshotValue, { color: BrandColors.text }]}>
               {profile?.playsSports ? 'Yes' : 'No'}
             </Text>
@@ -357,14 +626,14 @@ export default function ProfileScreen() {
         onPress={() => router.push('/workout/library')}
       >
         <View style={styles.libraryHeader}>
-          <Text style={[styles.libraryIcon, { color: BrandColors.accent }]}>📚</Text>
+          <IconSymbol name="books.vertical.fill" size={24} color={BrandColors.accent} />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.libraryTitle, { color: BrandColors.text }]}>Workout Library</Text>
+            <Text style={[styles.libraryTitle, { color: BrandColors.text }]}>Library</Text>
             <Text style={[styles.librarySubtitle, { color: BrandColors.textSecondary }]}>
-              Browse your saved templates or create custom exercises.
+              Browse your saved workouts and meals, or create custom exercises.
             </Text>
           </View>
-          <Text style={[styles.libraryChevron, { color: BrandColors.textSecondary }]}>›</Text>
+          <IconSymbol name="chevron.right" size={20} color={BrandColors.textSecondary} />
         </View>
       </TouchableOpacity>
 
@@ -377,6 +646,9 @@ export default function ProfileScreen() {
         )}
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut} activeOpacity={0.85}>
           <Text style={[styles.signOutButtonText, { color: '#fff' }]}>Sign Out</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.deleteAccountButton} onPress={handleDeleteAccount} activeOpacity={0.85}>
+          <Text style={[styles.deleteAccountButtonText, { color: '#fff' }]}>Delete Account</Text>
         </TouchableOpacity>
       </View>
 
@@ -418,40 +690,16 @@ export default function ProfileScreen() {
               <OnboardingStep step={3} />
             </View>
 
-            {/* Sex Step */}
-            <View style={styles.editSection}>
-              <Text style={styles.sectionTitle}>Sex</Text>
-              <OnboardingStep step={4} />
-            </View>
-
-            {/* Goals Step */}
-            <View style={styles.editSection}>
-              <Text style={styles.sectionTitle}>Fitness Goals</Text>
-              <OnboardingStep step={6} />
-            </View>
-
             {/* Schedule Step */}
             <View style={styles.editSection}>
               <Text style={styles.sectionTitle}>Workout Schedule</Text>
               <OnboardingStep step={8} />
             </View>
 
-            {/* Sports Step */}
+            {/* Injury Limitations Step */}
             <View style={styles.editSection}>
-              <Text style={styles.sectionTitle}>Sports</Text>
+              <Text style={styles.sectionTitle}>Injury Limitations</Text>
               <OnboardingStep step={9} />
-            </View>
-
-            {/* Sport Selection Step */}
-            <View style={styles.editSection}>
-              <Text style={styles.sectionTitle}>Sport Selection</Text>
-              <OnboardingStep step={10} />
-            </View>
-
-            {/* Team Name Step */}
-            <View style={styles.editSection}>
-              <Text style={styles.sectionTitle}>Team Name</Text>
-              <OnboardingStep step={12} />
             </View>
           </ScrollView>
         </View>
@@ -485,10 +733,56 @@ export default function ProfileScreen() {
           <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
             <View style={styles.editSection}>
               <Text style={styles.sectionTitle}>Fitness Goals</Text>
-              <OnboardingStep step={5} />
+              <OnboardingStep step={6} />
             </View>
           </ScrollView>
         </View>
+      </Modal>
+
+      {/* Progress Modal */}
+      <Modal
+        visible={showProgress}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowProgress(false)}
+      >
+        <ProgressScreen />
+        <TouchableOpacity
+          style={[
+            styles.modalBackButtonSmall,
+            {
+              backgroundColor: BrandColors.accent,
+              top: Math.max(insets.top + 8, 16),
+            }
+          ]}
+          onPress={() => setShowProgress(false)}
+          activeOpacity={0.8}
+        >
+          <IconSymbol name="chevron.left" size={16} color="#000" />
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Store Modal */}
+      <Modal
+        visible={showStore}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowStore(false)}
+      >
+        <StoreScreen hideAdAndRestore={true} />
+        <TouchableOpacity
+          style={[
+            styles.modalBackButtonSmall,
+            {
+              backgroundColor: BrandColors.accent,
+              top: Math.max(insets.top + 8, 16),
+            }
+          ]}
+          onPress={() => setShowStore(false)}
+          activeOpacity={0.8}
+        >
+          <IconSymbol name="chevron.left" size={16} color="#000" />
+        </TouchableOpacity>
       </Modal>
     </ScrollView>
   );
@@ -503,21 +797,32 @@ const styles = StyleSheet.create({
   },
   heroCard: {
     backgroundColor: BrandColors.gray800,
-    borderRadius: BorderRadius.lg,
+    borderRadius: 20,
     padding: Spacing.lg,
     borderWidth: 1,
-    borderColor: BrandColors.gray700,
+    borderColor: BrandColors.accent + '40',
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.lg,
     position: 'relative',
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
   avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   avatarText: {
     fontSize: Typography.fontSize['2xl'],
@@ -540,6 +845,10 @@ const styles = StyleSheet.create({
   },
   heroStat: {
     alignItems: 'flex-start',
+    gap: 4,
+  },
+  actionIconContainer: {
+    marginBottom: Spacing.xs,
   },
   heroStatValue: {
     fontSize: Typography.fontSize['2xl'],
@@ -550,10 +859,37 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.xs,
     fontFamily: Typography.fontFamily,
   },
+  lastWorkoutContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: Spacing.xs,
+  },
   lastWorkoutText: {
     fontSize: Typography.fontSize.xs,
     fontFamily: Typography.fontFamily,
-    marginTop: Spacing.xs,
+    flex: 1,
+  },
+  tierBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginTop: Spacing.sm,
+    alignSelf: 'flex-start',
+  },
+  tierBadgeText: {
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+  },
+  tierBadgeSubtext: {
+    fontSize: Typography.fontSize.xs,
+    fontFamily: Typography.fontFamily,
+    marginLeft: Spacing.xs,
   },
   editHeroButton: {
     backgroundColor: BrandColors.accent,
@@ -570,11 +906,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
   },
-  editHeroButtonText: {
-    fontSize: Typography.fontSize.base,
-    fontWeight: Typography.fontWeight.bold,
-    fontFamily: Typography.fontFamily,
-  },
   actionRow: {
     flexDirection: 'row',
     gap: Spacing.md,
@@ -582,14 +913,16 @@ const styles = StyleSheet.create({
   actionCard: {
     flex: 1,
     backgroundColor: BrandColors.gray800,
-    borderRadius: BorderRadius.lg,
+    borderRadius: 16,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: BrandColors.gray700,
+    borderColor: BrandColors.accent + '30',
     gap: Spacing.xs,
-  },
-  actionIcon: {
-    fontSize: Typography.fontSize['2xl'],
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
   actionTitle: {
     fontSize: Typography.fontSize.lg,
@@ -608,18 +941,37 @@ const styles = StyleSheet.create({
   },
   snapshotCard: {
     gap: Spacing.sm,
+    borderColor: BrandColors.accent + '30',
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   cardTitle: {
     fontSize: Typography.fontSize.lg,
     fontWeight: Typography.fontWeight.semibold,
     fontFamily: Typography.fontFamily,
-    marginBottom: Spacing.xs,
   },
   snapshotRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: BrandColors.gray800,
+  },
+  snapshotLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    flex: 1,
   },
   snapshotLabel: {
     fontSize: Typography.fontSize.xs,
@@ -638,9 +990,11 @@ const styles = StyleSheet.create({
   metricTile: {
     width: '30%',
     minWidth: 100,
-    borderRadius: BorderRadius.md,
+    borderRadius: 12,
     borderWidth: 1,
+    borderColor: BrandColors.accent + '30',
     padding: Spacing.sm,
+    backgroundColor: BrandColors.gray800,
   },
   metricLabel: {
     fontSize: Typography.fontSize.xs,
@@ -654,9 +1008,17 @@ const styles = StyleSheet.create({
   },
   recalculateButton: {
     paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: Spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   recalculateButtonText: {
     fontSize: Typography.fontSize.base,
@@ -716,15 +1078,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
+    borderColor: BrandColors.accent + '30',
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
   libraryHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
     flex: 1,
-  },
-  libraryIcon: {
-    fontSize: Typography.fontSize['2xl'],
   },
   libraryTitle: {
     fontSize: Typography.fontSize.lg,
@@ -736,12 +1101,14 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fontFamily,
     marginTop: 2,
   },
-  libraryChevron: {
-    fontSize: Typography.fontSize['2xl'],
-    fontFamily: Typography.fontFamily,
-  },
   accountCard: {
     gap: Spacing.md,
+    borderColor: BrandColors.accent + '30',
+    shadowColor: BrandColors.accent,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
   accountTitle: {
     color: BrandColors.text,
@@ -765,6 +1132,19 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   signOutButtonText: {
+    color: '#fff',
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+  },
+  deleteAccountButton: {
+    backgroundColor: '#991b1b',
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+  },
+  deleteAccountButtonText: {
     color: '#fff',
     fontSize: Typography.fontSize.base,
     fontWeight: Typography.fontWeight.semibold,
@@ -851,5 +1231,41 @@ const styles = StyleSheet.create({
     fontWeight: Typography.fontWeight.semibold,
     fontFamily: Typography.fontFamily,
     marginBottom: Spacing.md,
+  },
+  modalBackButton: {
+    position: 'absolute',
+    left: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalBackButtonSmall: {
+    position: 'absolute',
+    left: 16,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    zIndex: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalBackButtonText: {
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
   },
 });

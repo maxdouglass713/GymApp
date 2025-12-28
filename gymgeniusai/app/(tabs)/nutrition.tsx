@@ -15,12 +15,13 @@ import {
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { BrandColors, ComponentStyles } from '@/constants/theme';
+import { BrandColors, ComponentStyles, Typography, BorderRadius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNutritionStore, FOOD_DATABASE, getLocalDateKey } from '@/stores/nutritionStore';
 import { usePointsStore } from '@/stores/pointsStore';
 import { useAuth } from '@/components/AuthProvider';
 import { useUserStore } from '@/stores/userStore';
+import { useWorkoutStore } from '@/stores/workoutStore';
 import { nutritionFirebaseService, FoodItem as FirebaseFoodItem } from '@/services/nutritionFirebaseService';
 import { getGoalDescription, calculatePersonalizedMacros } from '@/utils/macroCalculator';
 import { userService, mealService } from '@/services/firestoreService';
@@ -31,22 +32,27 @@ import { router } from 'expo-router';
 import { SwipeableFoodItem } from '@/components/nutrition/SwipeableFoodItem';
 import { MealSection } from '@/components/nutrition/MealSection';
 import { DailyTotals } from '@/components/nutrition/DailyTotals';
-import { MacroTargetsCard } from '@/components/nutrition/MacroTargetsCard';
 import { MacroBars } from '@/components/nutrition/MacroBars';
+import { CalorieBudget } from '@/components/nutrition/CalorieBudget';
 import { PlayerSelector } from '@/components/nutrition/PlayerSelector';
 import { MealPlanActions } from '@/components/nutrition/MealPlanActions';
-import { WeekPicker } from '@/components/workout/WeekPicker';
+import { LightningSeparator } from '@/components/shared/LightningSeparator';
 import { generateUniqueId } from '@/utils/id';
 import { SearchModal } from '@/components/nutrition/modals/SearchModal';
 import { LogFoodModal } from '@/components/nutrition/modals/LogFoodModal';
-import { BarcodeModal } from '@/components/nutrition/modals/BarcodeModal';
 import { SnapTrackModal } from '@/components/nutrition/modals/SnapTrackModal';
 import { UnlockModal } from '@/components/nutrition/modals/UnlockModal';
 import { NutritionPlannerModal } from '@/components/nutrition/modals/NutritionPlannerModal';
 import { ManualMacroModal } from '@/components/nutrition/modals/ManualMacroModal';
 import { EditFoodModal } from '@/components/nutrition/modals/EditFoodModal';
 import { PlayerSelectionModal } from '@/components/nutrition/modals/PlayerSelectionModal';
+import { CustomMealModal, type CustomMealInput } from '@/components/nutrition/modals/CustomMealModal';
+import { WaterTrackingModal } from '@/components/nutrition/modals/WaterTrackingModal';
+import { NutritionalBreakdownModal } from '@/components/nutrition/modals/NutritionalBreakdownModal';
 import { useMealPlan } from '@/hooks/useNutrition/useMealPlan';
+import { eventBus } from '@/lib/eventBus';
+import { MealPlanGenerator } from '@/components/MealPlanGenerator';
+import { isFeatureEnabled } from '@/utils/features/featureFlags';
 
 // Global variable declarations for meal plan sharing
 declare global {
@@ -70,10 +76,10 @@ const mapGoalToPrimary = (
 };
 
 const MEAL_TYPES = [
-  { key: 'breakfast', label: 'Breakfast', icon: '🌅' },
-  { key: 'lunch', label: 'Lunch', icon: '☀️' },
-  { key: 'dinner', label: 'Dinner', icon: '🌙' },
-  { key: 'snacks', label: 'Snacks', icon: '🍎' },
+  { key: 'breakfast', label: 'Breakfast', icon: undefined },
+  { key: 'lunch', label: 'Lunch', icon: undefined },
+  { key: 'dinner', label: 'Dinner', icon: undefined },
+  { key: 'snacks', label: 'Snacks', icon: undefined },
 ] as const;
 
 export default function NutritionScreen() {
@@ -95,7 +101,12 @@ export default function NutritionScreen() {
     setMealCompleted,
     refreshDailyMeta,
     autoCompletePendingMeals,
+    customMeals,
+    addCustomMeal,
+    loadCustomMeals,
   } = useNutritionStore();
+
+  const { getWorkoutForDate } = useWorkoutStore();
 
   const todayKey = getLocalDateKey(new Date());
   const selectedDateKey = getLocalDateKey(selectedDate);
@@ -138,13 +149,14 @@ export default function NutritionScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showLogFoodModal, setShowLogFoodModal] = useState(false);
-  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [showSnapTrackModal, setShowSnapTrackModal] = useState(false);
+  const [showWaterTrackingModal, setShowWaterTrackingModal] = useState(false);
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [showNutritionPlannerModal, setShowNutritionPlannerModal] = useState(false);
   const [showManualMacroModal, setShowManualMacroModal] = useState(false);
   // Edit Macros modal state
   const [showEditFoodModal, setShowEditFoodModal] = useState(false);
+  const [showNutritionalBreakdownModal, setShowNutritionalBreakdownModal] = useState(false);
   const [editFood, setEditFood] = useState<any>(null);
   const [editServingSize, setEditServingSize] = useState('');
   const [editServingCount, setEditServingCount] = useState('1');
@@ -160,6 +172,8 @@ export default function NutritionScreen() {
   const [availablePlayers, setAvailablePlayers] = useState<Array<{id: string, name: string}>>([]);
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
+  const [showCustomMealModal, setShowCustomMealModal] = useState(false);
+  const [showMealPlanGenerator, setShowMealPlanGenerator] = useState(false);
   
   // Coach-specific: Selected player and their targets
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
@@ -209,10 +223,8 @@ export default function NutritionScreen() {
           if (playerEdits[user.uid]) {
             setLastSentMealPlanData(playerEdits[user.uid].mealPlanData);
           }
-          console.log('✅ Meal plan is completed');
         } else {
           setIsMealPlanCompleted(false);
-          console.log('⏳ Meal plan is not completed yet');
         }
       }
     } catch (error) {
@@ -228,7 +240,8 @@ export default function NutritionScreen() {
       const selectedDateCopy = new Date(selectedDate);
       selectedDateCopy.setHours(0, 0, 0, 0);
 
-      await autoCompletePendingMeals(user?.uid || undefined);
+      // Auto-completion disabled - users should manually complete meals
+      // await autoCompletePendingMeals(user?.uid || undefined);
       
       // If viewing today's nutrition and it's a new day, clear current day's foods
       if (selectedDateCopy.getTime() === today.getTime() && currentDayNutrition && currentDayNutrition.foods && currentDayNutrition.foods.length > 0) {
@@ -242,7 +255,6 @@ export default function NutritionScreen() {
             lastDate.setHours(0, 0, 0, 0);
             // If last date is different from today, it's a new day - clear nutrition
             if (lastDate.getTime() !== today.getTime()) {
-              console.log('📅 New day detected - clearing current nutrition');
               // Clear all foods for today
               if (currentDayNutrition && currentDayNutrition.foods) {
                 const foodsToRemove = currentDayNutrition.foods;
@@ -269,26 +281,27 @@ export default function NutritionScreen() {
     return () => clearInterval(interval);
   }, [selectedDate, currentDayNutrition, removeFoodItem, autoCompletePendingMeals, user?.uid]);
 
-  useEffect(() => {
-    autoCompletePendingMeals(user?.uid || undefined).catch((error) =>
-      console.error('❌ Error during pending meal auto-complete on mount:', error)
-    );
-  }, [autoCompletePendingMeals, user?.uid]);
+  // Auto-completion disabled - users should manually complete meals
+  // useEffect(() => {
+  //   autoCompletePendingMeals(user?.uid || undefined).catch((error) =>
+  //     console.error('❌ Error during pending meal auto-complete on mount:', error)
+  //   );
+  // }, [autoCompletePendingMeals, user?.uid]);
 
-  useEffect(() => {
-    if (isPastSelectedDate) {
-      autoCompletePendingMeals(user?.uid || undefined).catch((error) =>
-        console.error('❌ Error during pending meal auto-complete for past date:', error)
-      );
-    }
-  }, [isPastSelectedDate, autoCompletePendingMeals, user?.uid, currentDayNutrition]);
+  // Removed auto-completion for past days - users should manually complete meals
+  // useEffect(() => {
+  //   if (isPastSelectedDate) {
+  //     autoCompletePendingMeals(user?.uid || undefined).catch((error) =>
+  //       console.error('❌ Error during pending meal auto-complete for past date:', error)
+  //     );
+  //   }
+  // }, [isPastSelectedDate, autoCompletePendingMeals, user?.uid, currentDayNutrition]);
   
   // Check for meal plan ID on mount and when global changes
   React.useEffect(() => {
     const checkMealPlanId = () => {
       const mealPlanId = (global as any).sharedMealPlanId;
       if (mealPlanId && mealPlanId !== sharedMealPlanId) {
-        console.log('📋 Meal plan ID detected in state:', mealPlanId);
         // Check completion status when ID is set
         checkCompletionStatus(mealPlanId);
       }
@@ -299,6 +312,40 @@ export default function NutritionScreen() {
     const interval = setInterval(checkMealPlanId, 1000);
     return () => clearInterval(interval);
   }, [sharedMealPlanId, checkCompletionStatus]);
+  
+  // Listen for events from lightning bolt button
+  useEffect(() => {
+    const unsubscribeSnapTrack = eventBus.subscribe('openSnapTrack', async () => {
+      if (!isFeatureEnabled('cameraPhotoMacros')) {
+        return; // Feature disabled
+      }
+      if (!permission?.granted) {
+        const result = await requestPermission();
+        if (result.granted) {
+          setShowSnapTrackModal(true);
+        }
+      } else {
+        setShowSnapTrackModal(true);
+      }
+    });
+    
+    const unsubscribeSearch = eventBus.subscribe('openFoodSearch', (mealType?: string) => {
+      if (mealType) {
+        setSelectedMealType(mealType);
+      }
+      setShowSearchModal(true);
+    });
+    
+    const unsubscribeWater = eventBus.subscribe('openWaterTracking', () => {
+      setShowWaterTrackingModal(true);
+    });
+    
+    return () => {
+      unsubscribeSnapTrack();
+      unsubscribeSearch();
+      unsubscribeWater();
+    };
+  }, [permission, requestPermission]);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFood, setSelectedFood] = useState<any>(null);
@@ -360,14 +407,11 @@ export default function NutritionScreen() {
     await new Promise(resolve => setTimeout(resolve, 100));
     
     if (!(global as any).sharedMealPlanData) {
-      console.log('⚠️ No shared meal plan data available yet');
       return false;
     }
     
     // Note: Duplicate load prevention is now handled by useMealPlan hook
     
-    console.log('🍽️ Loading shared meal plan');
-    console.log('🍽️ Shared meal plan data:', (global as any).sharedMealPlanData);
     
     try {
       const mealPlanData = (global as any).sharedMealPlanData;
@@ -375,13 +419,11 @@ export default function NutritionScreen() {
       // Ensure we have the mealPlanId stored for completion tracking
       if (mealPlanData?.mealPlanId && !(global as any).sharedMealPlanId) {
         (global as any).sharedMealPlanId = mealPlanData.mealPlanId;
-        console.log('📋 Stored meal plan ID for completion tracking:', mealPlanData.mealPlanId);
       }
       // Also store document ID if available from the original meal plan object
       const originalMealPlan = (global as any).sharedMealPlanData;
       if (originalMealPlan?.id && !(global as any).sharedMealPlanDocId) {
         (global as any).sharedMealPlanDocId = originalMealPlan.id;
-        console.log('📋 Stored meal plan document ID for completion tracking:', originalMealPlan.id);
       }
       
       // Extract date from meal plan
@@ -416,7 +458,6 @@ export default function NutritionScreen() {
             // If meals already exist for this exact date, don't load the meal plan again
             // This means the meal plan was already loaded previously
             if (existingMeals.length > 0) {
-              console.log(`⚠️ Meals already exist for ${mealPlanDateString} (${existingMeals.length} meals). Skipping meal plan load to prevent duplicates.`);
               // Clear the global data since we're not loading it
               (global as any).sharedMealPlanData = null;
               (global as any).sharedMealPlanId = null;
@@ -427,7 +468,6 @@ export default function NutritionScreen() {
           console.error('⚠️ Error checking existing meals:', error);
           console.error('⚠️ Error details:', error?.message || error);
           // Continue with loading if check fails - better to load than skip entirely
-          console.log('⚠️ Continuing with meal plan load despite check error');
         }
       } else if (!user?.uid) {
         console.warn('⚠️ No user ID available, skipping existing meals check');
@@ -455,7 +495,6 @@ export default function NutritionScreen() {
         return false;
       }
 
-      console.log('🍽️ Found meals:', Object.keys(meals));
 
       // Helper function to deduplicate foods array (remove exact duplicates from the meal plan data itself)
       // This checks for duplicates based on name, serving size, serving count, and meal type
@@ -470,7 +509,6 @@ export default function NutritionScreen() {
             seen.add(foodKey);
             unique.push(food);
           } else {
-            console.log(`⚠️ Found duplicate in meal plan data: ${food.name} (${food.servingCount} × ${food.servingSize}) - skipping`);
           }
         }
         
@@ -501,10 +539,7 @@ export default function NutritionScreen() {
         const foods = deduplicateFoods(rawFoods);
         
         if (rawFoods.length !== foods.length) {
-          console.log(`⚠️ Deduplicated ${mealType}: ${rawFoods.length} -> ${foods.length} foods`);
         }
-        
-        console.log(`🍽️ Loading ${mealType}: ${foods.length} unique foods`);
         
         for (const food of foods) {
           try {
@@ -515,11 +550,8 @@ export default function NutritionScreen() {
             // Create a more specific key that includes serving info to catch exact duplicates
             const foodKey = `${foodName}::${servingSize}::${servingCount}::${mealType}`;
             
-            console.log(`🍽️ Processing: ${foodName} - ${servingCount} × ${servingSize} (${mealType})`);
-            
             // Check if we've already added this exact food in this session
             if (addedFoods.has(foodKey)) {
-              console.log(`⚠️ Food ${foodName} (${servingCount} × ${servingSize}) already added in this session (${mealType}), skipping duplicate`);
               continue;
             }
             
@@ -534,7 +566,6 @@ export default function NutritionScreen() {
             );
             
             if (existingFood) {
-              console.log(`⚠️ Food ${foodName} (${servingCount} × ${servingSize}) already exists in store (${mealType}), skipping duplicate`);
               addedFoods.add(foodKey); // Mark as added to prevent retry
               continue;
             }
@@ -543,27 +574,41 @@ export default function NutritionScreen() {
             addedFoods.add(foodKey);
             
             // Convert shared food data to FoodItem format - preserve exact serving count
+            // Calculate macrosPerServing correctly to avoid double multiplication
+            let macrosPerServing;
+            if (food.macrosPerServing) {
+              macrosPerServing = food.macrosPerServing;
+            } else if (food.totalMacros && servingCount > 0) {
+              // Calculate per-serving by dividing total by serving count
+              macrosPerServing = {
+                calories: (food.totalMacros.calories || 0) / servingCount,
+                protein: (food.totalMacros.protein || 0) / servingCount,
+                carbs: (food.totalMacros.carbs || 0) / servingCount,
+                fat: (food.totalMacros.fat || 0) / servingCount,
+              };
+            } else {
+              // Fallback to zeros if no macro data
+              macrosPerServing = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+            }
+            
+            // Calculate totalMacros from macrosPerServing * servingCount
+            const totalMacros = {
+              calories: macrosPerServing.calories * servingCount,
+              protein: macrosPerServing.protein * servingCount,
+              carbs: macrosPerServing.carbs * servingCount,
+              fat: macrosPerServing.fat * servingCount,
+            };
+            
             const foodItem = {
               name: foodName,
               servingSize: servingSize,
               servingCount: servingCount, // Preserve exact serving count from meal plan
-              macrosPerServing: food.macrosPerServing || {
-                calories: food.totalMacros?.calories || 0,
-                protein: food.totalMacros?.protein || 0,
-                carbs: food.totalMacros?.carbs || 0,
-                fat: food.totalMacros?.fat || 0,
-              },
-              totalMacros: food.totalMacros || {
-                calories: (food.macrosPerServing?.calories || 0) * servingCount,
-                protein: (food.macrosPerServing?.protein || 0) * servingCount,
-                carbs: (food.macrosPerServing?.carbs || 0) * servingCount,
-                fat: (food.macrosPerServing?.fat || 0) * servingCount,
-              },
+              macrosPerServing: macrosPerServing,
+              totalMacros: totalMacros,
               mealType: mealType,
               loggedAt: mealPlanDate,
             };
             
-            console.log(`✅ Adding: ${foodItem.name} - ${foodItem.servingCount} × ${foodItem.servingSize} (${mealType})`);
 
             // Double-check one more time before adding (in case state changed)
             // Check for exact match including serving count
@@ -577,7 +622,6 @@ export default function NutritionScreen() {
             );
             
             if (finalDuplicate) {
-              console.log(`⚠️ Food ${foodName} (${servingCount} × ${servingSize}) appeared in store during processing (${mealType}), skipping`);
               continue;
             }
             
@@ -609,7 +653,6 @@ export default function NutritionScreen() {
               // Keep only the first one, remove the rest
               for (let i = 1; i < matchingFoods.length; i++) {
                 removeFoodItem(matchingFoods[i].id);
-                console.log(`🗑️ Removed duplicate ${foodItem.name} (id: ${matchingFoods[i].id})`);
               }
             }
             
@@ -620,7 +663,6 @@ export default function NutritionScreen() {
                 
                 if (justAddedFood) {
                   await saveMealToFirebase(justAddedFood, user.uid);
-                  console.log(`✅ Saved ${foodItem.name} to Firebase`);
                 } else {
                   console.warn(`⚠️ Could not find ${foodItem.name} in store after adding`);
                 }
@@ -642,7 +684,6 @@ export default function NutritionScreen() {
       // Clear the meal plan data but keep the IDs so we can track completion
       (global as any).sharedMealPlanData = null;
       
-      console.log('✅ Meal plan loaded successfully');
       console.log('📋 Meal plan ID stored:', {
         global: (global as any).sharedMealPlanId,
         state: sharedMealPlanId,
@@ -750,6 +791,7 @@ export default function NutritionScreen() {
           primaryGoal: ['build_muscle', 'lose_fat', 'improve_fitness'].includes(primaryGoalValue)
             ? primaryGoalValue
             : 'improve_fitness',
+          goals: userDoc.goals || (primaryGoalValue ? [primaryGoalValue] : []), // Include goals array
           weeklySchedule: userDoc.weeklySchedule,
         });
         
@@ -788,6 +830,34 @@ export default function NutritionScreen() {
     
     initializePersonalizedTargets();
   }, [user?.uid, userDoc]);
+
+  // Sync personalized targets from userDoc when they change (e.g., after goal update)
+  useEffect(() => {
+    if (userDoc?.customMacroTargets?.calories) {
+      const targets = {
+        calories: userDoc.customMacroTargets.calories,
+        protein: userDoc.customMacroTargets.protein,
+        carbs: userDoc.customMacroTargets.carbs,
+        fat: userDoc.customMacroTargets.fat,
+      };
+      
+      // Only update if targets have changed
+      const currentTargets = useNutritionStore.getState().personalizedTargets;
+      if (!currentTargets || 
+          currentTargets.calories !== targets.calories ||
+          currentTargets.protein !== targets.protein ||
+          currentTargets.carbs !== targets.carbs ||
+          currentTargets.fat !== targets.fat) {
+        console.log('🔄 Syncing personalized targets from userDoc:', targets);
+        useNutritionStore.getState().setPersonalizedTargets(targets);
+        
+        // Refresh current day nutrition to use new targets
+        const { selectedDate, getDailyNutrition } = useNutritionStore.getState();
+        const updatedDayNutrition = getDailyNutrition(selectedDate);
+        useNutritionStore.setState({ currentDayNutrition: updatedDayNutrition });
+      }
+    }
+  }, [userDoc?.customMacroTargets?.calories, userDoc?.customMacroTargets?.protein, userDoc?.customMacroTargets?.carbs, userDoc?.customMacroTargets?.fat]);
 
   const MEAL_TYPE_KEYWORDS: Record<string, string[]> = {
     breakfast: [
@@ -927,6 +997,63 @@ export default function NutritionScreen() {
     setShowLogFoodModal(true);
   };
 
+  const handleCustomMealSelect = (meal: any) => {
+    // Convert custom meal to food item format
+    const foodItem = {
+      name: meal.name,
+      measurements: [{
+        amount: 1,
+        unit: meal.servingSize,
+        macros: meal.macrosPerServing,
+      }],
+    };
+    handleFoodSelect(foodItem);
+  };
+
+  const handleCreateCustomMeal = () => {
+    setShowSearchModal(false);
+    setShowCustomMealModal(true);
+  };
+
+  const handleCustomMealSubmit = (mealInput: CustomMealInput) => {
+    const userId = user?.uid || 'anonymous';
+    const createdMeal = addCustomMeal({
+      name: mealInput.name,
+      servingSize: mealInput.servingSize,
+      userId: userId,
+      macrosPerServing: {
+        calories: mealInput.calories,
+        protein: mealInput.protein,
+        carbs: mealInput.carbs,
+        fat: mealInput.fat,
+      },
+    }, userId);
+    
+    // Automatically select the newly created meal
+    handleCustomMealSelect(createdMeal);
+    setShowCustomMealModal(false);
+  };
+
+  // Load custom meals on mount
+  useEffect(() => {
+    const userId = user?.uid || 'anonymous';
+    loadCustomMeals(userId);
+  }, [loadCustomMeals, user?.uid]);
+
+  // Listen for meal selection from library
+  useEffect(() => {
+    const { eventBus } = require('@/lib/eventBus');
+    const handleMealSelect = (meal: any) => {
+      handleCustomMealSelect(meal);
+    };
+    
+    const unsubscribe = eventBus.subscribe('nutrition:selectMeal', handleMealSelect);
+    
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   const handleLogFood = async () => {
     if (isLoggingFood) {
       return;
@@ -948,12 +1075,15 @@ export default function NutritionScreen() {
         return;
       }
 
-      // Calculate macros based on selected measurement and serving count
+      // Get per-serving macros from the selected measurement (before multiplication)
+      const macrosPerServing = selectedMeasurement.macros;
+
+      // Calculate total macros based on serving count
       const calculatedMacros = {
-        calories: selectedMeasurement.macros.calories * count,
-        protein: selectedMeasurement.macros.protein * count,
-        carbs: selectedMeasurement.macros.carbs * count,
-        fat: selectedMeasurement.macros.fat * count,
+        calories: macrosPerServing.calories * count,
+        protein: macrosPerServing.protein * count,
+        carbs: macrosPerServing.carbs * count,
+        fat: macrosPerServing.fat * count,
       };
 
       const servingSizeText = `${count} ${selectedMeasurement.unit}${count !== 1 ? 's' : ''}`;
@@ -962,34 +1092,37 @@ export default function NutritionScreen() {
       const foodId = generateUniqueId('food');
 
       // Add food item locally first - this updates the store immediately and triggers UI update
+      // Pass macrosPerServing (per-serving) so store can calculate totalMacros correctly
+      // Also pass micronutrientsPerServing if available
       await addFoodItem({
         name: selectedFood.name,
         servingSize: servingSizeText,
         servingCount: count,
-        macrosPerServing: calculatedMacros,
+        macrosPerServing: macrosPerServing, // Per-serving macros, not total
+        micronutrientsPerServing: selectedMeasurement?.micronutrients, // Pass micronutrients if available
         mealType: selectedMealType as any,
         id: foodId, // Pass the ID so we can track it for points
       } as any); // Type assertion to allow id field
 
-      // Save to Firebase with user UID (async, doesn't block UI update)
-      // The food is already visible in the UI from the addFoodItem call above
+      // Save to Firebase with user UID - await to ensure it's saved before continuing
+      // This prevents the meal from disappearing if loadUserMealsFromFirebase is called
       if (user?.uid) {
         const { saveMealToFirebase } = useNutritionStore.getState();
+        // Use selectedDate for loggedAt to ensure meals are associated with the correct date
+        const loggedAtDate = new Date(selectedDate);
+        loggedAtDate.setHours(12, 0, 0, 0);
         const newFoodItem = {
           id: foodId,
           name: selectedFood.name,
           servingSize: servingSizeText,
           servingCount: count,
-          macrosPerServing: calculatedMacros,
+          macrosPerServing: macrosPerServing, // Per-serving macros
           mealType: selectedMealType as any,
-          loggedAt: new Date(),
-          totalMacros: calculatedMacros,
+          loggedAt: loggedAtDate,
+          totalMacros: calculatedMacros, // Total macros (already calculated)
         };
-        // Don't await - save in background so UI updates immediately
-        // The food is already in the local store and visible
-        saveMealToFirebase(newFoodItem, user.uid).catch((error) => {
-          console.error('Error saving food to Firebase:', error);
-        });
+        // Await the save to ensure it completes before closing modal
+        await saveMealToFirebase(newFoodItem, user.uid);
       }
 
       // No points awarded for adding a food item – points are given when a meal is marked complete
@@ -1007,108 +1140,58 @@ export default function NutritionScreen() {
     }
   };
 
-  const handleBarcodeScan = async () => {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
-        Alert.alert('Camera Permission Required', 'Please allow camera access to scan barcodes.');
-        return;
-      }
-    }
-    setShowBarcodeModal(true);
-  };
-
-  const handleBarcodeScanned = async ({ type, data }: { type: string; data: string }) => {
-    // Mock food lookup based on barcode - in a real app, you'd use a food database API
-    const mockFoods: Record<string, any> = {
-      '1234567890123': {
-        name: 'Greek Yogurt',
-        servingSize: '150g',
-        macros: { calories: 89, protein: 15, carbs: 5.4, fat: 0.6 }
-      },
-      '2345678901234': {
-        name: 'Protein Bar',
-        servingSize: '60g',
-        macros: { calories: 200, protein: 20, carbs: 15, fat: 8 }
-      },
-      '3456789012345': {
-        name: 'Banana',
-        servingSize: '120g',
-        macros: { calories: 105, protein: 1.3, carbs: 27, fat: 0.4 }
-      }
-    };
-
-    const scannedFood = mockFoods[data] || {
-      name: 'Unknown Product',
-      servingSize: '1 serving',
-      macros: { calories: 0, protein: 0, carbs: 0, fat: 0 }
-    };
-    
-    await addFoodItem({
-      name: scannedFood.name,
-      servingSize: scannedFood.servingSize,
-      servingCount: 1,
-      macrosPerServing: scannedFood.macros,
-      mealType: selectedMealType as any,
-    });
-
-    // Save to Firebase with user UID
-    if (user?.uid) {
-      const { saveMealToFirebase } = useNutritionStore.getState();
-        const newFoodItem = {
-          id: generateUniqueId('food'),
-        name: scannedFood.name,
-        servingSize: scannedFood.servingSize,
-        servingCount: 1,
-        macrosPerServing: scannedFood.macros,
-        mealType: selectedMealType as any,
-        loggedAt: new Date(),
-        totalMacros: scannedFood.macros,
+  const handleLogWater = async (amount: number, count: number, type: 'bottles' | 'cups') => {
+    try {
+      const foodId = generateUniqueId('food');
+      const servingSizeText = `${amount.toFixed(1)} oz`;
+      
+      // Water has 0 macros
+      const waterMacros = {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
       };
-      await saveMealToFirebase(newFoodItem, user.uid);
-    }
 
-    // No points awarded for individual food items - only for complete meals
-    setShowBarcodeModal(false);
-    Alert.alert('Food Added!', `${scannedFood.name} added to your ${selectedMealType}.`);
-  };
+      // Display name shows bottle/cup count
+      const unit = type === 'bottles' ? 'bottle' : 'cup';
+      const unitPlural = type === 'bottles' ? 'bottles' : 'cups';
+      const displayName = count === 1 ? `Water (1 ${unit})` : `Water (${count} ${unitPlural})`;
 
-  const handleMockScan = async () => {
-    // Mock barcode scan result
-    const mockFood = {
-      name: 'Greek Yogurt',
-      servingSize: '150g',
-      macros: { calories: 89, protein: 15, carbs: 5.4, fat: 0.6 }
-    };
-    
-    await addFoodItem({
-      name: mockFood.name,
-      servingSize: mockFood.servingSize,
-      servingCount: 1,
-      macrosPerServing: mockFood.macros,
-      mealType: selectedMealType as any,
-    });
-
-    // Save to Firebase with user UID
-    if (user?.uid) {
-      const { saveMealToFirebase } = useNutritionStore.getState();
-        const newFoodItem = {
-          id: generateUniqueId('food'),
-        name: mockFood.name,
-        servingSize: mockFood.servingSize,
+      // Add water as a food item under snacks meal type
+      await addFoodItem({
+        id: foodId,
+        name: displayName,
+        servingSize: servingSizeText,
         servingCount: 1,
-        macrosPerServing: mockFood.macros,
-        mealType: selectedMealType as any,
-        loggedAt: new Date(),
-        totalMacros: mockFood.macros,
-      };
-      await saveMealToFirebase(newFoodItem, user.uid);
-    }
+        macrosPerServing: waterMacros,
+        mealType: 'snacks',
+      } as any);
 
-    // No points awarded for individual food items - only for complete meals
-    setShowBarcodeModal(false);
-    Alert.alert('Barcode Scanned', `Barcode scanned: ${mockFood.name} (${mockFood.servingSize})`);
+      // Save to Firebase
+      if (user?.uid) {
+        const { saveMealToFirebase } = useNutritionStore.getState();
+        // Use selectedDate for loggedAt to ensure meals are associated with the correct date
+        const loggedAtDate = new Date(selectedDate);
+        loggedAtDate.setHours(12, 0, 0, 0);
+        const waterItem = {
+          id: foodId,
+          name: displayName,
+          servingSize: servingSizeText,
+          servingCount: 1,
+          macrosPerServing: waterMacros,
+          mealType: 'snacks' as const,
+          loggedAt: loggedAtDate,
+          totalMacros: waterMacros,
+        };
+        await saveMealToFirebase(waterItem, user.uid);
+      }
+    } catch (error) {
+      console.error('Error logging water:', error);
+      throw error;
+    }
   };
+
 
   const handleEditFood = (food: any) => {
     setEditFood(food);
@@ -1517,6 +1600,9 @@ export default function NutritionScreen() {
   };
 
   const handleSnapTrack = () => {
+    if (!isFeatureEnabled('cameraPhotoMacros')) {
+      return; // Feature disabled
+    }
     if (!isFeatureUnlocked('photo_macros')) {
       setShowUnlockModal(true);
     } else {
@@ -1613,26 +1699,6 @@ export default function NutritionScreen() {
     );
   };
 
-  const renderPersonalizedTargetsInfo = () => {
-    const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player';
-    if (isCoach) return null;
-    if (!userDoc?.customMacroTargets) return null;
-    
-    return (
-      <MacroTargetsCard
-        customMacroTargets={userDoc.customMacroTargets}
-        colors={colors}
-        onEdit={() => {
-          if (!userDoc.customMacroTargets) return;
-          setManualCalories(userDoc.customMacroTargets.calories.toString());
-          setManualProtein(userDoc.customMacroTargets.protein.toString());
-          setManualCarbs(userDoc.customMacroTargets.carbs.toString());
-          setManualFat(userDoc.customMacroTargets.fat.toString());
-          setShowManualMacroModal(true);
-        }}
-      />
-    );
-  };
 
   const renderMacroBars = () => {
     if (!currentDayNutrition) return null;
@@ -1660,7 +1726,7 @@ export default function NutritionScreen() {
         currentDayNutrition={currentDayNutrition}
         colors={colors}
         profile={profile}
-        canCompleteMeal={!isPastSelectedDate}
+        canCompleteMeal={true}
         onAddFood={(mealType) => {
           setSelectedMealType(mealType);
           handleAddFood();
@@ -1993,46 +2059,182 @@ export default function NutritionScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.weekPickerContainer}>
-          <WeekPicker
-          selectedDate={selectedDate}
-            weekOffset={weekOffset}
-            onDateSelect={(date) => {
-              setSelectedDate(date);
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.dateNavigatorContainer}>
+          <TouchableOpacity
+            style={styles.dateNavButton}
+            onPress={() => {
+              const prevDate = new Date(selectedDate);
+              prevDate.setDate(prevDate.getDate() - 1);
+              setSelectedDate(prevDate);
+              setWeekOffset(0); // Reset week offset when manually navigating
             }}
-            onWeekOffsetChange={setWeekOffset}
-        />
+          >
+            <IconSymbol name="chevron.left" size={24} color={BrandColors.accent} />
+          </TouchableOpacity>
+          
+          <View style={styles.dateDisplay}>
+            <Text style={[styles.dateText, { color: colors.text }]}>
+              {selectedDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric',
+                year: 'numeric'
+              })}
+            </Text>
+          </View>
+          
+          <TouchableOpacity
+            style={styles.dateNavButton}
+            onPress={() => {
+              const nextDate = new Date(selectedDate);
+              nextDate.setDate(nextDate.getDate() + 1);
+              setSelectedDate(nextDate);
+              setWeekOffset(0); // Reset week offset when manually navigating
+            }}
+          >
+            <IconSymbol name="chevron.right" size={24} color={BrandColors.accent} />
+          </TouchableOpacity>
         </View>
-        {renderPlayerSelector()}
-        {renderPersonalizedTargetsInfo()}
-        {renderMacroBars()}
-        {MEAL_TYPES.map(renderMealSection)}
         
-        <MealPlanActions
-          profile={profile}
-          currentDayNutrition={currentDayNutrition}
-          selectedPlayerId={selectedPlayerId}
-          isMealPlanCompleted={isMealPlanCompleted}
-          hasSharedMealPlan={!!((global as any).sharedMealPlanId || sharedMealPlanId)}
-          hasMealPlanChanged={hasMealPlanChanged}
-          onSendMealPlan={handleSendMealPlanToTeam}
-          onCompleteMealPlan={handleCompleteMealPlan}
-          colors={colors}
-        />
+        <LightningSeparator />
         
-        {renderDailyTotals()}
+        {/* Main Content Section */}
+        <View style={[styles.mainContent, { marginTop: -4 }]}>
+          {renderPlayerSelector()}
+          
+          {/* Two Column Layout: Calorie Budget (Left) and Macro Bars (Right) */}
+          <View style={styles.twoColumnLayout}>
+            {/* Left: Calorie Budget */}
+            <View style={styles.leftColumn}>
+              <View style={[styles.calorieBudgetBox, { 
+                backgroundColor: colors.surface, 
+                borderColor: BrandColors.accent,
+                shadowColor: BrandColors.accent,
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 2 },
+                elevation: 5,
+              }]}>
+                <View style={styles.macroBarsHeader}>
+                  <Text style={[styles.macroBarsBoxTitle, { color: colors.text }]}>Calorie Budget</Text>
+                </View>
+                <CalorieBudget
+                  consumed={(() => {
+                    const consumedCalories = currentDayNutrition?.totalMacros?.calories || 0;
+                    // Get workout for selected date and sum up calories burned from cardio
+                    const workout = getWorkoutForDate(selectedDate);
+                    const caloriesBurned = workout?.exercises
+                      ?.filter(ex => ex.type === 'cardio' && ex.caloriesBurned)
+                      .reduce((sum, ex) => sum + (ex.caloriesBurned || 0), 0) || 0;
+                    // Subtract calories burned from consumed (net calories)
+                    return Math.max(0, consumedCalories - caloriesBurned);
+                  })()}
+                  target={getTargets().calories || 2000}
+                  colors={colors}
+                />
+              </View>
+            </View>
+            
+            {/* Right: Macro Bars Box */}
+            <View style={styles.rightColumn}>
+              <TouchableOpacity
+                style={[styles.macroBarsBox, { 
+                  backgroundColor: colors.surface, 
+                  borderColor: BrandColors.accent,
+                  shadowColor: BrandColors.accent,
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                }]}
+                onPress={() => {
+                  if (!isCoach && userDoc?.customMacroTargets) {
+                    setManualCalories(userDoc.customMacroTargets.calories.toString());
+                    setManualProtein(userDoc.customMacroTargets.protein.toString());
+                    setManualCarbs(userDoc.customMacroTargets.carbs.toString());
+                    setManualFat(userDoc.customMacroTargets.fat.toString());
+                    setShowManualMacroModal(true);
+                  }
+                }}
+                activeOpacity={0.7}
+                disabled={isCoach || !userDoc?.customMacroTargets}
+              >
+                <View style={styles.macroBarsHeader}>
+                  <Text style={[styles.macroBarsBoxTitle, { color: colors.text }]}>Daily Macros</Text>
+                </View>
+                {renderMacroBars()}
+              </TouchableOpacity>
+            </View>
+          </View>
+          
+          {/* Meals Section */}
+          <View style={styles.mealsSection}>
+            {MEAL_TYPES.map(renderMealSection)}
+          </View>
+          
+          {/* Nutritional Breakdown Button */}
+          <View style={styles.nutritionalBreakdownButtonContainer}>
+            <TouchableOpacity
+              style={[styles.nutritionalBreakdownButton, { backgroundColor: BrandColors.accent }]}
+              onPress={() => {
+                console.log('Nutritional breakdown button pressed');
+                setShowNutritionalBreakdownModal(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.nutritionalBreakdownButtonText}>View Nutritional Breakdown</Text>
+            </TouchableOpacity>
+          </View>
+          
+          {/* Meal Plan Actions */}
+          <MealPlanActions
+            profile={profile}
+            currentDayNutrition={currentDayNutrition}
+            selectedPlayerId={selectedPlayerId}
+            isMealPlanCompleted={isMealPlanCompleted}
+            hasSharedMealPlan={!!((global as any).sharedMealPlanId || sharedMealPlanId)}
+            hasMealPlanChanged={hasMealPlanChanged}
+            onSendMealPlan={handleSendMealPlanToTeam}
+            onCompleteMealPlan={handleCompleteMealPlan}
+            colors={colors}
+          />
+          
+          {/* Daily Totals */}
+          {renderDailyTotals()}
+        </View>
       </ScrollView>
       
       <SearchModal
         visible={showSearchModal}
         searchQuery={searchQuery}
         filteredFoods={filteredFoods}
+        customMeals={customMeals}
         onClose={() => setShowSearchModal(false)}
         onSearchChange={setSearchQuery}
         onFoodSelect={handleFoodSelect}
+        onCustomMealSelect={handleCustomMealSelect}
+        onCreateCustomMeal={handleCreateCustomMeal}
         colors={colors}
       />
+      <CustomMealModal
+        visible={showCustomMealModal}
+        onClose={() => setShowCustomMealModal(false)}
+        onSubmit={handleCustomMealSubmit}
+        colors={colors}
+      />
+      <Modal
+        visible={showMealPlanGenerator}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <MealPlanGenerator 
+          isInitialGeneration={false}
+          onClose={() => setShowMealPlanGenerator(false)}
+        />
+      </Modal>
       <LogFoodModal
         visible={showLogFoodModal}
         selectedFood={selectedFood}
@@ -2042,23 +2244,21 @@ export default function NutritionScreen() {
         onClose={() => setShowLogFoodModal(false)}
         onMeasurementSelect={setSelectedMeasurement}
         onServingCountChange={setServingCount}
-        onMealTypeChange={setSelectedMealType}
         onSave={handleLogFood}
         colors={colors}
       />
-      <BarcodeModal
-        visible={showBarcodeModal}
-        permission={permission}
-        onClose={() => setShowBarcodeModal(false)}
-        onBarcodeScanned={handleBarcodeScanned}
-        onRequestPermission={requestPermission}
-        onMockScan={handleMockScan}
-        colors={colors}
-      />
-      <SnapTrackModal
-        visible={showSnapTrackModal}
-        onClose={() => setShowSnapTrackModal(false)}
-        onCapture={handleMockCapture}
+      {isFeatureEnabled('cameraPhotoMacros') && (
+        <SnapTrackModal
+          visible={showSnapTrackModal}
+          onClose={() => setShowSnapTrackModal(false)}
+          onCapture={handleMockCapture}
+          colors={colors}
+        />
+      )}
+      <WaterTrackingModal
+        visible={showWaterTrackingModal}
+        onClose={() => setShowWaterTrackingModal(false)}
+        onLogWater={handleLogWater}
         colors={colors}
       />
       <UnlockModal
@@ -2116,6 +2316,12 @@ export default function NutritionScreen() {
         onConfirm={handleConfirmSendMealPlan}
         colors={colors}
       />
+      <NutritionalBreakdownModal
+        visible={showNutritionalBreakdownModal}
+        onClose={() => setShowNutritionalBreakdownModal(false)}
+        foods={currentDayNutrition?.foods || []}
+        colors={colors}
+      />
     </View>
   );
 }
@@ -2124,14 +2330,94 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  dateNavigatorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  dateNavButton: {
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dateDisplay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: BrandColors.text,
+  },
   weekPickerContainer: {
     paddingTop: 60,
     paddingHorizontal: 16,
-    paddingBottom: 8,
+    paddingBottom: 4,
   },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 24,
+  },
+  mainContent: {
     paddingHorizontal: 16,
+  },
+  macroBarsBox: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 2,
+    padding: Spacing.lg,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 5,
+    minHeight: 280,
+    flex: 1,
+  },
+  macroBarsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  macroBarsBoxTitle: {
+    fontSize: Typography.fontSize.lg,
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
+  },
+  editMacroButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calorieBudgetBox: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 2,
+    padding: Spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 280,
+    flex: 1,
+  },
+  twoColumnLayout: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+    alignItems: 'flex-start',
+  },
+  leftColumn: {
+    flex: 1,
+  },
+  rightColumn: {
+    flex: 1,
+  },
+  mealsSection: {
+    gap: 12,
+    marginBottom: 20,
   },
   header: {
     paddingTop: 60,
@@ -2982,6 +3268,22 @@ const styles = StyleSheet.create({
   },
   macroChallengeSubtitle: {
     fontSize: 14,
+  },
+  nutritionalBreakdownButtonContainer: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  nutritionalBreakdownButton: {
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+  },
+  nutritionalBreakdownButtonText: {
+    color: '#fff',
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
   },
 });
 

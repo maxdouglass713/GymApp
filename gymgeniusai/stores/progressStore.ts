@@ -120,13 +120,13 @@ export interface ProgressStore {
   bodyweights: { date: string; weight: number }[];
   
   // UI State
-  selectedTab: 'history' | 'prs' | 'trends' | 'insights';
+  selectedTab: 'history' | 'prs' | 'trends' | 'insights' | 'weight';
   selectedMonth: Date;
   selectedTrendPeriod: '4W' | '12W' | '52W';
   selectedPRFilter: string;
   
   // Actions
-  setSelectedTab: (tab: 'history' | 'prs' | 'trends' | 'insights') => void;
+  setSelectedTab: (tab: 'history' | 'prs' | 'trends' | 'insights' | 'weight') => void;
   setSelectedMonth: (month: Date) => void;
   setSelectedTrendPeriod: (period: '4W' | '12W' | '52W') => void;
   setSelectedPRFilter: (filter: string) => void;
@@ -336,15 +336,20 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
           return;
         }
         
+        // Find the set with the heaviest weight (top set)
+        // If weights are equal, prefer the one with more reps
         const topSet = validSets.reduce((best, current) => {
           if (!best) return current;
-          const bestScore = (best.weight ?? 0) * (best.reps ?? 0);
-          const currentScore = (current.weight ?? 0) * (current.reps ?? 0);
-          if (currentScore > bestScore) {
+          const bestWeight = best.weight ?? 0;
+          const currentWeight = current.weight ?? 0;
+          
+          // Prioritize heaviest weight first
+          if (currentWeight > bestWeight) {
             return current;
           }
-          if (currentScore === bestScore) {
-            return (current.weight ?? 0) > (best.weight ?? 0) ? current : best;
+          if (currentWeight === bestWeight) {
+            // If weights are equal, prefer more reps
+            return (current.reps ?? 0) > (best.reps ?? 0) ? current : best;
           }
           return best;
         }, validSets[0]);

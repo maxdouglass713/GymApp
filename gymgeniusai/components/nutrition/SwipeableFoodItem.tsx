@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native
 import { Swipeable } from 'react-native-gesture-handler';
 import { BrandColors } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { MicronutrientsDisplay } from './MicronutrientsDisplay';
 
 interface FoodItem {
   name: string;
@@ -14,6 +15,7 @@ interface FoodItem {
     carbs: number;
     fat: number;
   };
+  totalMicronutrients?: any;
 }
 
 interface SwipeableFoodItemProps {
@@ -88,6 +90,10 @@ export const SwipeableFoodItem: React.FC<SwipeableFoodItemProps> = ({ food, colo
           <Text style={[styles.foodMacros, { color: '#FFFFFF' }]}>
             {Math.round(food.totalMacros.calories)} cal • {Math.round(food.totalMacros.protein)}g P • {Math.round(food.totalMacros.carbs)}g C • {Math.round(food.totalMacros.fat)}g F
           </Text>
+          <MicronutrientsDisplay 
+            micronutrients={food.totalMicronutrients} 
+            colors={colors} 
+          />
         </View>
         <TouchableOpacity
           style={styles.removeFoodButton}

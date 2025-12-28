@@ -13,6 +13,7 @@ import {
 import { useAuth } from '@/components/AuthProvider';
 import { BrandColors, ComponentStyles } from '@/constants/theme';
 import { router } from 'expo-router';
+import { emailService } from '@/services/emailService';
 
 export default function SignUpScreen() {
   const [email, setEmail] = useState('');
@@ -44,9 +45,16 @@ export default function SignUpScreen() {
       
       await signUp(email.trim(), password, firstName.trim());
       
+      // Send welcome email (non-blocking)
+      emailService.sendWelcomeEmail(email.trim(), firstName.trim()).catch(err => {
+        console.error('❌ Welcome email failed:', err);
+        console.error('❌ Error details:', JSON.stringify(err, null, 2));
+        // Log to help debug - but don't block signup
+      });
+      
       // Navigate to institution check for new users
       console.log('✅ Sign up successful, navigating to institution check');
-      Alert.alert('Success!', 'Account created successfully! Let\'s customize your experience...');
+      Alert.alert('Success!', 'Account created successfully! Check your email for a welcome message. Let\'s customize your experience...');
       router.replace('/institution-check');
     } catch (error: any) {
       console.error('❌ Sign up error:', error);

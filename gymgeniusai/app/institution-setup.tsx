@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,16 @@ import { BrandColors, ComponentStyles } from '@/constants/theme';
 import { useOnboardingStore } from '@/stores/onboardingStore';
 
 export default function InstitutionSetupScreen() {
+  // V1.0: Block institution features - redirect immediately
+  useEffect(() => {
+    const { checkFeatureOrShowComingSoon } = require('@/utils/features/featureFlags');
+    checkFeatureOrShowComingSoon('teamManagement', 'Team & Institution Features');
+    // Redirect back after showing alert
+    setTimeout(() => {
+      router.replace('/(tabs)');
+    }, 500);
+  }, []);
+
   const { updateData, data } = useOnboardingStore();
   const [currentStep, setCurrentStep] = useState(0);
   

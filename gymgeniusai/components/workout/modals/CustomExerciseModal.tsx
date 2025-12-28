@@ -22,7 +22,7 @@ interface CustomExerciseModalProps {
   onSubmit: (exercise: CustomExerciseInput) => void;
 }
 
-type WizardStep = 'basics' | 'muscle' | 'equipment' | 'details' | 'review';
+type WizardStep = 'basics' | 'muscle' | 'equipment' | 'machineType' | 'details' | 'review';
 
 const getInitialFormState = () => ({
   name: '',
@@ -30,6 +30,8 @@ const getInitialFormState = () => ({
   muscleGroup: '',
   equipment: [] as string[],
   isBodyweight: false,
+  machineType: 'none' as 'pin' | 'plate' | 'none',
+  cableGrip: '' as string,
   trackingStyle: 'weight_reps' as CustomExerciseTrackingStyle,
   cardioMetrics: {
     duration: true,
@@ -74,7 +76,19 @@ export const CustomExerciseModal: React.FC<CustomExerciseModalProps> = ({
     return Array.from(equipment).sort((a, b) => a.localeCompare(b));
   }, []);
 
-  const steps: WizardStep[] = ['basics', 'muscle', 'equipment', 'details', 'review'];
+  // Determine if Question 4 (machineType) should be shown based on equipment
+  const hasCable = form.equipment.some(eq => eq.toLowerCase() === 'cable');
+  const hasMachine = form.equipment.some(eq => 
+    eq.toLowerCase().includes('machine') || eq === 'Smith Machine'
+  );
+  const shouldShowQuestion4 = hasCable || hasMachine;
+
+  // Build steps array conditionally - include machineType only if Cable or Machine is selected
+  const baseSteps: WizardStep[] = ['basics', 'muscle', 'equipment', 'details', 'review'];
+  const steps: WizardStep[] = shouldShowQuestion4
+    ? ['basics', 'muscle', 'equipment', 'machineType', 'details', 'review']
+    : baseSteps;
+  
   const activeStepIndex = steps.indexOf(step);
   const totalSteps = steps.length;
 
@@ -111,6 +125,32 @@ export const CustomExerciseModal: React.FC<CustomExerciseModalProps> = ({
         if (form.equipment.length === 0) {
           setError('Pick at least one piece of equipment (include Bodyweight if applicable).');
           return;
+        }
+        // After equipment selection, check if we should show Question 4
+        // If neither Cable nor Machine, skip directly to details
+        const hasCableAfterSelection = form.equipment.some(eq => eq.toLowerCase() === 'cable');
+        const hasMachineAfterSelection = form.equipment.some(eq => 
+          eq.toLowerCase().includes('machine') || eq === 'Smith Machine'
+        );
+        if (!hasCableAfterSelection && !hasMachineAfterSelection) {
+          // Skip machineType step, go directly to details
+          const detailsIndex = steps.indexOf('details');
+          if (detailsIndex !== -1) {
+            setStep('details');
+            return;
+          }
+        }
+        break;
+      }
+      case 'machineType': {
+        // Validate based on equipment type
+        if (hasCable && !form.cableGrip) {
+          setError('Please select a cable grip type.');
+          return;
+        }
+        if (hasMachine && form.machineType === 'none') {
+          // Allow 'none' as valid selection, but could require explicit selection
+          // For now, we'll allow it to proceed
         }
         break;
       }
@@ -158,6 +198,8 @@ export const CustomExerciseModal: React.FC<CustomExerciseModalProps> = ({
       muscleGroup: form.muscleGroup,
       equipment: form.equipment,
       isBodyweight: form.type === 'strength' ? form.isBodyweight : false,
+      machineType: form.type === 'strength' && form.machineType !== 'none' ? form.machineType : undefined,
+      cableGrip: form.cableGrip || undefined,
       trackingStyle:
         form.type === 'strength'
           ? form.trackingStyle
@@ -342,6 +384,129 @@ export const CustomExerciseModal: React.FC<CustomExerciseModalProps> = ({
           </View>
         );
 
+      case 'machineType': {
+        // Show cable grip question if Cable is selected
+        if (hasCable) {
+          const cableGripOptions = [
+            { value: 'rope', label: 'Rope' },
+            { value: 'straight_bar', label: 'Straight Bar' },
+            { value: 'ez_bar', label: 'EZ Bar' },
+            { value: 'd_handle', label: 'D-Handle' },
+            { value: 'single_handle', label: 'Single Handle' },
+            { value: 'v_handle', label: 'V-Handle' },
+            { value: 'cable_handle', label: 'Cable Handle' },
+            { value: 'other', label: 'Other' },
+          ];
+
+          return (
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: BrandColors.text }]}>Cable Grip</Text>
+              <Text style={[styles.stepDescription, { color: BrandColors.textSecondary }]}>
+                What type of grip or attachment do you use with the cable?
+              </Text>
+
+              <View style={styles.chipColumn}>
+                {cableGripOptions.map(({ value, label }) => (
+                  <TouchableOpacity
+                    key={value}
+                    style={[
+                      styles.detailOption,
+                      {
+                        borderColor: BrandColors.textSecondary,
+                        backgroundColor:
+                          form.cableGrip === value ? BrandColors.accent : BrandColors.gray800,
+                      },
+                    ]}
+                    onPress={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        cableGrip: value,
+                      }))
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.detailOptionTitle,
+                        { color: form.cableGrip === value ? '#000' : BrandColors.text },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          );
+        }
+
+        // Show machine type question if Machine is selected
+        if (hasMachine) {
+          return (
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: BrandColors.text }]}>Machine Type</Text>
+              <Text style={[styles.stepDescription, { color: BrandColors.textSecondary }]}>
+                What type of machine is this exercise performed on?
+              </Text>
+
+              <View style={styles.chipColumn}>
+                {[
+                  { 
+                    key: 'pin' as const, 
+                    label: 'Pin Loaded', 
+                    description: 'Machine with weight stack and pin selector (e.g., leg press, lat pulldown)' 
+                  },
+                  { 
+                    key: 'plate' as const, 
+                    label: 'Plate Loaded', 
+                    description: 'Machine where you add weight plates (e.g., hack squat, leg extension)' 
+                  },
+                  { 
+                    key: 'none' as const, 
+                    label: 'Not Applicable', 
+                    description: 'This exercise doesn\'t use a machine or machine type doesn\'t matter' 
+                  },
+                ].map(({ key, label, description }) => (
+                  <TouchableOpacity
+                    key={key}
+                    style={[
+                      styles.detailOption,
+                      {
+                        borderColor: BrandColors.textSecondary,
+                        backgroundColor:
+                          form.machineType === key ? BrandColors.accent : BrandColors.gray800,
+                      },
+                    ]}
+                    onPress={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        machineType: key,
+                      }))
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.detailOptionTitle,
+                        { color: form.machineType === key ? '#000' : BrandColors.text },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                    <Text
+                      style={[styles.detailOptionDescription, { color: BrandColors.textSecondary }]}
+                    >
+                      {description}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          );
+        }
+
+        // Should not reach here if steps array is built correctly, but return null as fallback
+        return null;
+      }
+
       case 'details':
         if (form.type === 'strength') {
           return (
@@ -504,6 +669,34 @@ export const CustomExerciseModal: React.FC<CustomExerciseModalProps> = ({
                     label="Bodyweight movement"
                     value={form.isBodyweight ? 'Yes' : 'No'}
                   />
+                  {form.cableGrip && (
+                    <SummaryRow
+                      label="Cable grip"
+                      value={
+                        form.cableGrip === 'rope' ? 'Rope' :
+                        form.cableGrip === 'straight_bar' ? 'Straight Bar' :
+                        form.cableGrip === 'ez_bar' ? 'EZ Bar' :
+                        form.cableGrip === 'd_handle' ? 'D-Handle' :
+                        form.cableGrip === 'single_handle' ? 'Single Handle' :
+                        form.cableGrip === 'v_handle' ? 'V-Handle' :
+                        form.cableGrip === 'cable_handle' ? 'Cable Handle' :
+                        form.cableGrip === 'other' ? 'Other' :
+                        form.cableGrip
+                      }
+                    />
+                  )}
+                  {form.machineType && form.machineType !== 'none' && (
+                    <SummaryRow
+                      label="Machine type"
+                      value={
+                        form.machineType === 'pin'
+                          ? 'Pin Loaded'
+                          : form.machineType === 'plate'
+                            ? 'Plate Loaded'
+                            : 'Not Applicable'
+                      }
+                    />
+                  )}
                   <SummaryRow
                     label="Tracking style"
                     value={

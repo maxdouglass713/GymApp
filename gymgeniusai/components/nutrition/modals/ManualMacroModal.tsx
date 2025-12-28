@@ -1,6 +1,8 @@
-import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, StyleSheet } from 'react-native';
-import { BrandColors, ComponentStyles } from '@/constants/theme';
+import React, { useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, StyleSheet, findNodeHandle } from 'react-native';
+import { BrandColors, ComponentStyles, Typography, Spacing, BorderRadius } from '@/constants/theme';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ManualMacroModalProps {
   visible: boolean;
@@ -31,78 +33,166 @@ export const ManualMacroModal: React.FC<ManualMacroModalProps> = ({
   onSave,
   colors,
 }) => {
+  const insets = useSafeAreaInsets();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const caloriesInputRef = useRef<TextInput>(null);
+  const proteinInputRef = useRef<TextInput>(null);
+  const carbsInputRef = useRef<TextInput>(null);
+  const fatInputRef = useRef<TextInput>(null);
+  
+  const handleInputFocus = (inputRef: React.RefObject<TextInput>) => {
+    // Delay to ensure keyboard is shown
+    setTimeout(() => {
+      if (inputRef.current && scrollViewRef.current) {
+        const inputHandle = findNodeHandle(inputRef.current);
+        
+        if (inputHandle) {
+          // Use React Native's built-in scroll responder to keep input visible
+          const scrollResponder = scrollViewRef.current as any;
+          scrollResponder?.scrollResponderScrollNativeHandleToKeyboard?.(
+            inputHandle, 
+            200, // Increased offset to keep input well above keyboard
+            true // Animated
+          );
+        } else {
+          // Fallback: measure and scroll
+          inputRef.current.measureInWindow((x, y, width, height) => {
+            scrollViewRef.current?.measureInWindow((scrollX, scrollY, scrollWidth, scrollHeight) => {
+              const keyboardHeight = 400; // Increased keyboard height estimate
+              const visibleAreaHeight = scrollHeight - keyboardHeight;
+              const inputTop = y;
+              const inputBottom = y + height;
+              const visibleBottom = scrollY + visibleAreaHeight;
+              
+              // If input is below visible area, scroll down significantly
+              if (inputBottom > visibleBottom) {
+                const scrollNeeded = inputBottom - visibleBottom + 200; // Increased padding
+                scrollViewRef.current?.scrollTo({
+                  y: scrollNeeded,
+                  animated: true,
+                });
+              } else if (inputTop < scrollY + 100) {
+                // If input is too close to top, scroll up slightly
+                const relativeY = inputTop - scrollY;
+                scrollViewRef.current?.scrollTo({
+                  y: Math.max(0, relativeY - 150),
+                  animated: true,
+                });
+              }
+            });
+          });
+        }
+      }
+    }, 250);
+  };
+
+  const macroInputs = [
+    {
+      key: 'calories',
+      label: 'Calories',
+      value: manualCalories,
+      onChange: onCaloriesChange,
+      placeholder: '2500',
+      unit: 'cal',
+      color: '#FF6B35',
+      ref: caloriesInputRef,
+    },
+    {
+      key: 'protein',
+      label: 'Protein',
+      value: manualProtein,
+      onChange: onProteinChange,
+      placeholder: '150',
+      unit: 'g',
+      color: '#DC143C',
+      ref: proteinInputRef,
+    },
+    {
+      key: 'carbs',
+      label: 'Carbs',
+      value: manualCarbs,
+      onChange: onCarbsChange,
+      placeholder: '250',
+      unit: 'g',
+      color: '#FFD700',
+      ref: carbsInputRef,
+    },
+    {
+      key: 'fat',
+      label: 'Fat',
+      value: manualFat,
+      onChange: onFatChange,
+      placeholder: '70',
+      unit: 'g',
+      color: '#00FF88',
+      ref: fatInputRef,
+    },
+  ];
+
   return (
-    <Modal visible={visible} animationType="slide">
-      <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+      <View style={[styles.modalContainer, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 20) }]}>
         <View style={styles.modalHeader}>
-          <Text style={[styles.modalTitle, { color: colors.text }]}>Custom Macro Targets</Text>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={[styles.closeButton, { color: colors.tint }]}>Cancel</Text>
+          <TouchableOpacity 
+            style={[styles.closeButton, { backgroundColor: colors.gray800 }]}
+            onPress={onClose}
+            activeOpacity={0.7}
+          >
+            <IconSymbol name="chevron.right" size={20} color={colors.text} />
           </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Custom Macro Targets</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+              Set your daily nutrition goals
+            </Text>
+          </View>
         </View>
         
-        <ScrollView style={styles.infoModalContent}>
-          <Text style={[styles.manualMacroDescription, { color: colors.icon }]}>
-            Advanced users can manually set their daily macro targets. These will override the calculated values.
-          </Text>
+        <ScrollView 
+          ref={scrollViewRef}
+          style={styles.infoModalContent}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) + 400 }]}
+          keyboardShouldPersistTaps="handled"
+        >
+          {macroInputs.map((input) => (
+            <View key={input.key} style={styles.macroInputCard}>
+              <View style={[styles.macroInputHeader, { borderLeftColor: input.color }]}>
+                <View>
+                  <Text style={[styles.macroInputLabel, { color: colors.text }]}>{input.label}</Text>
+                  <Text style={[styles.macroInputUnit, { color: colors.textSecondary }]}>{input.unit}</Text>
+                </View>
+              </View>
+              <TextInput
+                ref={input.ref}
+                style={[
+                  styles.modalInput, 
+                  { 
+                    color: colors.text, 
+                    borderColor: input.color,
+                    backgroundColor: colors.surface,
+                  }
+                ]}
+                value={input.value}
+                onChangeText={input.onChange}
+                placeholder={input.placeholder}
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                onFocus={() => handleInputFocus(input.ref)}
+              />
+            </View>
+          ))}
           
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Daily Calories</Text>
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.icon }]}
-              value={manualCalories}
-              onChangeText={onCaloriesChange}
-              placeholder="2500"
-              placeholderTextColor={colors.icon}
-              keyboardType="numeric"
-            />
-          </View>
-          
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Protein (grams)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.icon }]}
-              value={manualProtein}
-              onChangeText={onProteinChange}
-              placeholder="150"
-              placeholderTextColor={colors.icon}
-              keyboardType="numeric"
-            />
-          </View>
-          
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Carbs (grams)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.icon }]}
-              value={manualCarbs}
-              onChangeText={onCarbsChange}
-              placeholder="250"
-              placeholderTextColor={colors.icon}
-              keyboardType="numeric"
-            />
-          </View>
-          
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Fat (grams)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.icon }]}
-              value={manualFat}
-              onChangeText={onFatChange}
-              placeholder="70"
-              placeholderTextColor={colors.icon}
-              keyboardType="numeric"
-            />
+          <View style={styles.modalActionsContainer}>
+            <TouchableOpacity
+              style={[styles.saveButton, { backgroundColor: colors.accent }]}
+              onPress={onSave}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.saveButtonText, { color: colors.background }]}>Save Targets</Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
-        
-        <View style={styles.modalActionsContainer}>
-          <TouchableOpacity
-            style={[ComponentStyles.button.primary, styles.saveButton]}
-            onPress={onSave}
-          >
-            <Text style={[ComponentStyles.button.primaryText, { color: '#000' }]}>Save Custom Targets</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </Modal>
   );
@@ -111,57 +201,92 @@ export const ManualMacroModal: React.FC<ManualMacroModalProps> = ({
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 50,
+    paddingHorizontal: Spacing.lg,
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: Spacing.md,
+    paddingTop: Spacing.md,
+    gap: Spacing.md,
+  },
+  headerRight: {
+    flex: 1,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: Typography.fontSize['2xl'],
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
+    marginBottom: 2,
+  },
+  modalSubtitle: {
+    fontSize: Typography.fontSize.sm,
+    fontFamily: Typography.fontFamily,
   },
   closeButton: {
-    fontSize: 16,
-    fontWeight: '600',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    transform: [{ rotate: '180deg' }],
   },
   infoModalContent: {
     flex: 1,
   },
-  manualMacroDescription: {
-    fontSize: 14,
-    marginBottom: 20,
-    lineHeight: 20,
-    textAlign: 'center',
+  scrollContent: {
+    paddingBottom: Spacing.lg,
   },
-  inputGroup: {
-    marginBottom: 20,
+  macroInputCard: {
+    marginBottom: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: 'transparent',
   },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
+  macroInputHeader: {
+    marginBottom: Spacing.sm,
+    paddingLeft: Spacing.sm,
+    borderLeftWidth: 3,
+  },
+  macroInputLabel: {
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.semibold,
+    fontFamily: Typography.fontFamily,
+  },
+  macroInputUnit: {
+    fontSize: Typography.fontSize.xs,
+    fontFamily: Typography.fontFamily,
+    marginTop: 2,
   },
   modalInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
+    borderWidth: 2,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    fontSize: Typography.fontSize.lg,
+    fontFamily: Typography.fontFamily,
+    fontWeight: Typography.fontWeight.semibold,
+    textAlign: 'center',
   },
   modalActionsContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    gap: 12,
+    paddingTop: Spacing.lg,
+    marginTop: Spacing.lg,
+    gap: Spacing.md,
   },
   saveButton: {
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
     alignItems: 'center',
-    marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  saveButtonText: {
+    fontSize: Typography.fontSize.base,
+    fontWeight: Typography.fontWeight.bold,
+    fontFamily: Typography.fontFamily,
   },
 });
 

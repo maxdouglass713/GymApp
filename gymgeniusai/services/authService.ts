@@ -5,10 +5,12 @@ import {
   sendPasswordResetEmail,
   updateProfile,
   onAuthStateChanged,
+  deleteUser,
   User as FirebaseUser
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '@/config/firebase';
+import { COLLECTIONS } from '@/types/firestore';
 
 export interface UserProfile {
   uid: string;
@@ -125,39 +127,21 @@ export class AuthService {
       } catch (profileError) {
         console.warn('⚠️ AuthService: Could not load profile from Firestore, creating fallback:', profileError);
         
-        // Create a fallback profile for Bruce Wayne
-        if (email === 'brucewayne101011@gmail.com') {
-          profile = {
-            uid: user.uid,
-            email: user.email!,
-            displayName: 'Bruce Wayne',
-            createdAt: new Date(),
-            onboardingComplete: true, // Set to true to bypass onboarding
-            points: 0,
-            settings: {
-              units: 'imperial',
-              notifications: true,
-              privacy: false,
-            }
-          };
-          console.log('✅ AuthService: Created fallback profile for Bruce Wayne:', profile);
-        } else {
-          // For other users, create a basic profile
-          profile = {
-            uid: user.uid,
-            email: user.email!,
-            displayName: user.displayName || undefined,
-            createdAt: new Date(),
-            onboardingComplete: false,
-            points: 0,
-            settings: {
-              units: 'imperial',
-              notifications: true,
-              privacy: false,
-            }
-          };
-          console.log('✅ AuthService: Created fallback profile:', profile);
-        }
+        // For users without a profile, create a basic fallback profile
+        profile = {
+          uid: user.uid,
+          email: user.email!,
+          displayName: user.displayName || undefined,
+          createdAt: new Date(),
+          onboardingComplete: false,
+          points: 0,
+          settings: {
+            units: 'imperial',
+            notifications: true,
+            privacy: false,
+          }
+        };
+        console.log('✅ AuthService: Created fallback profile:', profile);
       }
       
       console.log('✅ AuthService: Sign in successful');
@@ -350,6 +334,120 @@ export class AuthService {
   }
 
   /**
+   * Delete all user data from Firestore collections
+   */
+  async deleteAllUserData(uid: string): Promise<void> {
+    try {
+      console.log('🔄 Deleting all data for user:', uid);
+
+      // List of collections to clean up
+      const collectionsToDelete = [
+        { collection: COLLECTIONS.USERS, field: null }, // Delete user document directly
+        { collection: COLLECTIONS.WORKOUTS, field: 'uid' },
+        { collection: COLLECTIONS.MEALS, field: 'uid' },
+        { collection: COLLECTIONS.MEAL_PLANS, field: 'userId' },
+        { collection: COLLECTIONS.POINT_EVENTS, field: 'uid' },
+        { collection: COLLECTIONS.FEATURE_UNLOCKS, field: 'uid' },
+        { collection: COLLECTIONS.PROGRESS, field: 'uid' },
+        { collection: COLLECTIONS.USER_CHALLENGES, field: 'uid' },
+      ];
+
+      // Delete user document
+      const userRef = doc(db, COLLECTIONS.USERS, uid);
+      try {
+        await deleteDoc(userRef);
+        console.log('✅ Deleted user document');
+      } catch (error) {
+        console.warn('⚠️ Error deleting user document (may not exist):', error);
+      }
+
+      // Delete documents from collections
+      for (const { collection: collectionName, field } of collectionsToDelete) {
+        if (field) {
+          try {
+            const q = query(
+              collection(db, collectionName),
+              where(field, '==', uid)
+            );
+            const querySnapshot = await getDocs(q);
+            
+            const deletePromises = querySnapshot.docs.map(async (docSnapshot) => {
+              await deleteDoc(docSnapshot.ref);
+            });
+            
+            await Promise.all(deletePromises);
+            console.log(`✅ Deleted ${querySnapshot.size} documents from ${collectionName}`);
+          } catch (error) {
+            console.warn(`⚠️ Error deleting from ${collectionName}:`, error);
+          }
+        }
+      }
+
+      // Delete community memberships
+      try {
+        const membersQuery = query(
+          collection(db, COLLECTIONS.COMMUNITY_MEMBERS),
+          where('uid', '==', uid)
+        );
+        const membersSnapshot = await getDocs(membersQuery);
+        const memberDeletePromises = membersSnapshot.docs.map(async (memberDoc) => {
+          await deleteDoc(memberDoc.ref);
+        });
+        await Promise.all(memberDeletePromises);
+        console.log(`✅ Deleted ${membersSnapshot.size} community memberships`);
+      } catch (error) {
+        console.warn('⚠️ Error deleting community memberships:', error);
+      }
+
+      // Delete community feed entries
+      try {
+        const feedQuery = query(
+          collection(db, COLLECTIONS.COMMUNITY_FEED),
+          where('userId', '==', uid)
+        );
+        const feedSnapshot = await getDocs(feedQuery);
+        const feedDeletePromises = feedSnapshot.docs.map(async (feedDoc) => {
+          await deleteDoc(feedDoc.ref);
+        });
+        await Promise.all(feedDeletePromises);
+        console.log(`✅ Deleted ${feedSnapshot.size} feed entries`);
+      } catch (error) {
+        console.warn('⚠️ Error deleting feed entries:', error);
+      }
+
+      console.log('✅ All user data deleted successfully');
+    } catch (error: any) {
+      console.error('❌ Error deleting user data:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete user account and all associated data
+   */
+  async deleteAccount(): Promise<void> {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        throw new Error('No user is currently signed in');
+      }
+
+      console.log('🔄 Deleting account for user:', user.uid);
+
+      // First, delete all user data from Firestore
+      await this.deleteAllUserData(user.uid);
+
+      // Then, delete the Firebase Auth account
+      await deleteUser(user);
+      
+      console.log('✅ Account deleted successfully');
+    } catch (error: any) {
+      console.error('❌ Delete account error:', error);
+      throw this.handleAuthError(error);
+    }
+  }
+
+  /**
    * Handle Firebase auth errors and convert to user-friendly messages
    */
   private handleAuthError(error: any): Error {
@@ -374,6 +472,8 @@ export class AuthService {
         return new Error('Network error. Please check your connection and try again.');
       case 'auth/user-disabled':
         return new Error('This account has been disabled. Please contact support.');
+      case 'auth/requires-recent-login':
+        return new Error('This operation requires recent authentication. Please sign out and sign back in, then try again.');
       default:
         return new Error('An unexpected error occurred. Please try again.');
     }

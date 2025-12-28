@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import { workoutService } from '@/services/firestoreService';
+import { workoutService, globalCustomExercisesService } from '@/services/firestoreService';
 import { useUserStore } from './userStore';
 import { persistenceService } from '@/services/persistenceService';
 import { generateUniqueId } from '@/utils/id';
+import { EXERCISE_DATABASE } from '@/utils/workout/exerciseDatabase';
 
 export interface WorkoutSet {
   id: string;
@@ -40,6 +41,11 @@ export interface WorkoutExercise {
   };
   isBodyweight?: boolean;
   machineLoad?: MachineLoadMetadata;
+  duration?: number | null;
+  speed?: number | null;
+  distance?: number | null;
+  intensity?: string;
+  caloriesBurned?: number | null;
 }
 
 export interface Workout {
@@ -67,6 +73,7 @@ export interface CustomExercise {
   equipment: string[];
   isBodyweight: boolean;
   trackingStyle: CustomExerciseTrackingStyle;
+  machineType?: 'pin' | 'plate' | 'none'; // Machine type for equipment-based exercises
   cardioMetrics?: {
     duration?: boolean;
     distance?: boolean;
@@ -74,6 +81,7 @@ export interface CustomExercise {
   description?: string;
   createdAt: string;
   updatedAt?: string;
+  createdBy?: string; // User ID who created this exercise (for global exercises)
 }
 
 export interface CustomExerciseInput {
@@ -83,6 +91,8 @@ export interface CustomExerciseInput {
   equipment: string[];
   isBodyweight?: boolean;
   trackingStyle?: CustomExerciseTrackingStyle;
+  machineType?: 'pin' | 'plate' | 'none'; // Machine type for equipment-based exercises
+  cableGrip?: string; // Cable grip/attachment type (e.g., 'rope', 'straight_bar', 'd_handle')
   cardioMetrics?: {
     duration?: boolean;
     distance?: boolean;
@@ -142,8 +152,8 @@ export interface WorkoutStore {
 
 const KG_TO_LB = 2.20462;
 
-const isBodyweightLabel = (label?: string) => {
-  if (!label) {
+const isBodyweightLabel = (label?: string | null | undefined) => {
+  if (!label || typeof label !== 'string') {
     return false;
   }
   const normalized = label.toLowerCase();
@@ -222,16 +232,46 @@ const toDateSafe = (value: unknown): Date | null => {
 };
 
 const getLocalDateKey = (value: Date | string | number | null | undefined): string => {
-  const date =
-    value instanceof Date
-      ? value
-      : toDateSafe(value) ?? new Date();
+  try {
+    if (value instanceof Date) {
+      if (isNaN(value.getTime())) {
+        console.error('❌ Invalid Date object passed to getLocalDateKey');
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = `${today.getMonth() + 1}`.padStart(2, '0');
+        const day = `${today.getDate()}`.padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      const year = value.getFullYear();
+      const month = `${value.getMonth() + 1}`.padStart(2, '0');
+      const day = `${value.getDate()}`.padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    
+    const date = toDateSafe(value) ?? new Date();
+    if (isNaN(date.getTime())) {
+      console.error('❌ Invalid date after conversion in getLocalDateKey');
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = `${today.getMonth() + 1}`.padStart(2, '0');
+      const day = `${today.getDate()}`.padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
 
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, '0');
   const day = `${date.getDate()}`.padStart(2, '0');
 
   return `${year}-${month}-${day}`;
+  } catch (error) {
+    console.error('❌ Error in getLocalDateKey:', error);
+    // Fallback to today's date
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = `${today.getMonth() + 1}`.padStart(2, '0');
+    const day = `${today.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
 };
 
 export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
@@ -273,14 +313,41 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
 
   loadCustomExercises: async () => {
     try {
+      // Load local custom exercises (user's own)
       const stored = await persistenceService.loadCustomExercises();
-      if (stored && Array.isArray(stored)) {
-        set({ customExercises: stored as CustomExercise[] });
-      } else {
-        set({ customExercises: [] });
+      const localExercises = (stored && Array.isArray(stored)) ? (stored as CustomExercise[]) : [];
+      
+      // Load global custom exercises from Firebase (all users)
+      try {
+        const globalExercises = await globalCustomExercisesService.getAllCustomExercises();
+        console.log(`✅ Loaded ${globalExercises.length} global custom exercises from Firebase`);
+        
+        // Merge local and global exercises, avoiding duplicates by ID
+        const exerciseMap = new Map<string, CustomExercise>();
+        
+        // Add local exercises first (user's own take priority)
+        localExercises.forEach(ex => {
+          exerciseMap.set(ex.id, ex);
+        });
+        
+        // Add global exercises (don't overwrite local if same ID)
+        globalExercises.forEach(ex => {
+          if (!exerciseMap.has(ex.id)) {
+            exerciseMap.set(ex.id, ex as CustomExercise);
+          }
+        });
+        
+        const allExercises = Array.from(exerciseMap.values());
+        set({ customExercises: allExercises });
+        console.log(`✅ Total custom exercises loaded: ${allExercises.length} (${localExercises.length} local, ${globalExercises.length} global)`);
+      } catch (firebaseError) {
+        console.error('❌ Error loading global custom exercises from Firebase:', firebaseError);
+        // Fallback to local only if Firebase fails
+        set({ customExercises: localExercises });
       }
     } catch (error) {
       console.error('❌ Failed to load custom exercises:', error);
+      set({ customExercises: [] });
     }
   },
 
@@ -305,6 +372,7 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
       muscleGroup: exerciseInput.muscleGroup,
       equipment: exerciseInput.equipment.length ? exerciseInput.equipment : ['Bodyweight'],
       isBodyweight: Boolean(exerciseInput.isBodyweight),
+      machineType: exerciseInput.machineType,
       trackingStyle,
       cardioMetrics,
       description: exerciseInput.description?.trim() || undefined,
@@ -314,7 +382,24 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
 
     set((state) => {
       const updated = [...state.customExercises, customExercise];
+      // Save locally
       void persistenceService.saveCustomExercises(updated);
+      
+      // Save to Firebase (global collection) - get user ID from store
+      const userId = useUserStore.getState().userDoc?.id;
+      if (userId) {
+        globalCustomExercisesService.saveCustomExercise(customExercise, userId)
+          .then(() => {
+            console.log('✅ Custom exercise saved to global Firebase collection');
+          })
+          .catch((error) => {
+            console.error('❌ Error saving custom exercise to Firebase:', error);
+            // Don't block - local save already succeeded
+          });
+      } else {
+        console.warn('⚠️ No user ID available, skipping Firebase save for custom exercise');
+      }
+      
       return { customExercises: updated };
     });
 
@@ -397,14 +482,14 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
     const isCardioExercise = isObjectPayload && payload?.type === 'cardio';
     const trackingStyle = isObjectPayload ? (payload?.trackingStyle as CustomExerciseTrackingStyle | undefined) : undefined;
     const equipmentLabel = Array.isArray(payload?.equipment)
-      ? payload.equipment.join(', ')
-      : payload?.equipment;
+      ? payload.equipment.filter(Boolean).join(', ')
+      : (typeof payload?.equipment === 'string' ? payload.equipment : undefined);
 
     const isBodyweightExercise = typeof exerciseData === 'string'
       ? isBodyweightLabel(exerciseData)
       : Boolean(payload?.isBodyweight) ||
-        isBodyweightLabel(equipmentLabel) ||
-        isBodyweightLabel(payloadName);
+        (equipmentLabel ? isBodyweightLabel(equipmentLabel) : false) ||
+        (payloadName ? isBodyweightLabel(payloadName) : false);
 
     const defaultBodyWeight =
       !isCardioExercise && isBodyweightExercise ? getUserBodyWeightInLb() : null;
@@ -416,6 +501,29 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
       style: 'normal',
     };
 
+    // Get muscle group from exercise database
+    // First try exact match
+    let dbExerciseEntry = EXERCISE_DATABASE[payloadName as keyof typeof EXERCISE_DATABASE];
+    
+    // If not found, try removing equipment variants (e.g., "Incline Dumbbell Press" -> "Incline Press")
+    if (!dbExerciseEntry) {
+      const normalizedName = payloadName
+        .replace(/\s*\([^)]*\)\s*/g, '') // Remove anything in parentheses like "(Dumbbell)"
+        .replace(/\s*(Dumbbell|Barbell|Machine|Cable|Smith Machine|Bodyweight|Assisted|Weighted)\s*/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      dbExerciseEntry = EXERCISE_DATABASE[normalizedName as keyof typeof EXERCISE_DATABASE];
+    }
+    
+    const muscleGroup = dbExerciseEntry?.muscleGroup || payload.muscleGroup || undefined;
+    
+    // Log for debugging
+    if (muscleGroup) {
+      console.log(`✅ Exercise "${payloadName}" → muscle group: ${muscleGroup}`);
+    } else {
+      console.warn(`⚠️ Exercise "${payloadName}" → no muscle group found in database`);
+    }
+
     if (!isObjectPayload) {
       newExercise = {
         id: generateUniqueId('exercise'),
@@ -423,6 +531,7 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
         sets: [initialSet],
         type: 'strength',
         status: 'draft' as const,
+        muscleGroup: muscleGroup, // Set from database
       };
     } else {
       const { sets: incomingSets, ...rest } = payload;
@@ -432,6 +541,7 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
         name: payloadName,
         type: rest.type || 'strength',
         status: 'draft' as const,
+        muscleGroup: muscleGroup || rest.muscleGroup, // Use database value or provided value
         sets: isCardioExercise && Array.isArray(incomingSets) && incomingSets.length > 0
           ? incomingSets
           : [initialSet],
@@ -452,10 +562,14 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
     }
 
     set((state) => {
+      // Ensure currentWorkout is initialized
+      const currentWorkout = state.currentWorkout || { exercises: [], status: 'draft' as const };
+      const existingExercises = currentWorkout.exercises || [];
+      
       const updatedWorkout = {
-        ...state.currentWorkout,
+        ...currentWorkout,
         status: 'draft' as const,
-        exercises: [...(state.currentWorkout.exercises || []), newExercise],
+        exercises: [...existingExercises, newExercise],
       };
       
       // Auto-save to local storage
@@ -469,10 +583,14 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
   
   removeExercise: (exerciseId) => {
     set((state) => {
+      // Ensure currentWorkout is initialized
+      const currentWorkout = state.currentWorkout || { exercises: [], status: 'draft' as const };
+      const existingExercises = currentWorkout.exercises || [];
+      
       const updatedWorkout = {
-        ...state.currentWorkout,
+        ...currentWorkout,
         status: 'draft' as const,
-        exercises: state.currentWorkout.exercises?.filter(ex => ex.id !== exerciseId) || [],
+        exercises: existingExercises.filter(ex => ex.id !== exerciseId),
       };
       
       // Auto-save to local storage
@@ -484,10 +602,14 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
   
   addSet: (exerciseId) => {
     set((state) => {
+      // Ensure currentWorkout is initialized
+      const currentWorkout = state.currentWorkout || { exercises: [], status: 'draft' as const };
+      const existingExercises = currentWorkout.exercises || [];
+      
       const updatedWorkout = {
-        ...state.currentWorkout,
+        ...currentWorkout,
         status: 'draft' as const,
-        exercises: state.currentWorkout.exercises?.map(ex =>
+        exercises: existingExercises.map(ex =>
           ex.id === exerciseId
             ? (() => {
                 const previousSet = ex.sets?.[ex.sets.length - 1];
@@ -525,7 +647,7 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
 
   setExerciseSetCount: (exerciseId, count) => {
     const requestedCount = Number.isFinite(count) ? Math.floor(count) : 1;
-    const safeCount = Math.min(Math.max(requestedCount, 1), 12);
+    const safeCount = Math.min(Math.max(requestedCount, 1), 6);
 
     set((state) => {
       const exercise = state.currentWorkout.exercises?.find((ex) => ex.id === exerciseId);
@@ -811,12 +933,14 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
   hydrateDraftWorkout: (workout) => {
     set(() => {
       const normalizedExercises =
-        workout.exercises?.map((exercise) => ({
+        workout.exercises?.map((exercise, index) => ({
           ...exercise,
+          id: exercise.id || generateUniqueId('exercise'),
           status: exercise.status || 'saved',
           sets: Array.isArray(exercise.sets)
-            ? exercise.sets.map((set) => ({
+            ? exercise.sets.map((set, setIndex) => ({
                 ...set,
+                id: set.id || generateUniqueId('set'),
               }))
             : [],
         })) || [];
@@ -923,9 +1047,22 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
   },
   
   getWorkoutForDate: (date) => {
+    try {
+      if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+        console.error('❌ Invalid date passed to getWorkoutForDate:', date);
+        return null;
+      }
     const { workoutHistory } = get();
+      if (!workoutHistory || !Array.isArray(workoutHistory)) {
+        console.error('❌ Invalid workoutHistory in getWorkoutForDate');
+        return null;
+      }
     const dateString = getLocalDateKey(date);
-    return workoutHistory.find(workout => workout.date === dateString) || null;
+      return workoutHistory.find(workout => workout && workout.date === dateString) || null;
+    } catch (error) {
+      console.error('❌ Error in getWorkoutForDate:', error);
+      return null;
+    }
   },
   
   loadWorkoutsFromFirebase: async (uid: string) => {
@@ -1028,12 +1165,12 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
                 }
 
                 return {
-                  id: exercise.id || `exercise_${Date.now()}_${exerciseIndex}`,
+                  id: exercise.id || generateUniqueId('exercise'),
                   name: exercise.name || 'Unknown Exercise',
                   sets: setsArray.map((set, setIndex) => {
                     try {
                       return {
-                        id: set.id || `set_${Date.now()}_${setIndex}`,
+                        id: set.id || generateUniqueId('set'),
                         reps: typeof set.reps === 'number' ? set.reps : null,
                         weight: typeof set.weight === 'number' ? set.weight : null,
                         style: 'normal' as const,
@@ -1042,7 +1179,7 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
                     } catch (setError) {
                       console.error(`❌ Error processing set ${setIndex}:`, setError, set);
                       return {
-                        id: `set_${Date.now()}_${setIndex}`,
+                        id: generateUniqueId('set'),
                         reps: null,
                         weight: null,
                         style: 'normal' as const,
@@ -1057,7 +1194,7 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
               } catch (exerciseError) {
                 console.error(`❌ Error processing exercise ${exerciseIndex}:`, exerciseError, exercise);
                 return {
-                  id: `exercise_${Date.now()}_${exerciseIndex}`,
+                  id: generateUniqueId('exercise'),
                   name: 'Error Loading Exercise',
                   sets: [],
                   notes: '',
@@ -1079,9 +1216,71 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
         }
       }).filter(Boolean) as Workout[];
 
-      set({ workoutHistory });
+      // Deduplicate workouts before setting
+      // Strategy: Keep the most recent workout if duplicates are found
+      const deduplicatedWorkouts: Workout[] = [];
+      const seenIds = new Set<string>();
+      const seenDateTitle = new Map<string, Workout>(); // date + title -> workout
+      
+      // Sort by completedAt/createdAt descending to keep most recent duplicates
+      const sortedWorkouts = [...workoutHistory].sort((a, b) => {
+        const aDate = a.completedAt || a.createdAt || new Date(0);
+        const bDate = b.completedAt || b.createdAt || new Date(0);
+        return bDate.getTime() - aDate.getTime();
+      });
+      
+      for (const workout of sortedWorkouts) {
+        // Primary deduplication: by ID
+        if (workout.id && seenIds.has(workout.id)) {
+          console.log(`⚠️ Duplicate workout ID found: ${workout.id} - ${workout.title}, skipping`);
+          continue;
+        }
+        
+        // Secondary deduplication: by date + title (for cases where IDs differ but it's the same workout)
+        const dateTitleKey = `${workout.date || 'no-date'}_${workout.title || 'untitled'}`;
+        const existingByDateTitle = seenDateTitle.get(dateTitleKey);
+        
+        if (existingByDateTitle) {
+          // If we already have this date+title combo, keep the one with the most exercises or most recent
+          const currentExerciseCount = workout.exercises?.length || 0;
+          const existingExerciseCount = existingByDateTitle.exercises?.length || 0;
+          const currentDate = workout.completedAt || workout.createdAt || new Date(0);
+          const existingDate = existingByDateTitle.completedAt || existingByDateTitle.createdAt || new Date(0);
+          
+          // Keep the one with more exercises, or if equal, the more recent one
+          if (currentExerciseCount > existingExerciseCount || 
+              (currentExerciseCount === existingExerciseCount && currentDate.getTime() > existingDate.getTime())) {
+            // Remove the old one and add this one
+            const oldIndex = deduplicatedWorkouts.findIndex(w => w.id === existingByDateTitle.id);
+            if (oldIndex !== -1) {
+              deduplicatedWorkouts.splice(oldIndex, 1);
+              if (existingByDateTitle.id) {
+                seenIds.delete(existingByDateTitle.id);
+              }
+            }
+            console.log(`⚠️ Duplicate workout by date+title found: ${dateTitleKey}, keeping more complete/recent version`);
+          } else {
+            console.log(`⚠️ Duplicate workout by date+title found: ${dateTitleKey}, skipping (less complete/older)`);
+            continue;
+          }
+        }
+        
+        // Add to deduplicated list
+        deduplicatedWorkouts.push(workout);
+        if (workout.id) {
+          seenIds.add(workout.id);
+        }
+        seenDateTitle.set(dateTitleKey, workout);
+      }
+      
+      const duplicateCount = workoutHistory.length - deduplicatedWorkouts.length;
+      if (duplicateCount > 0) {
+        console.log(`🔍 Deduplication: Removed ${duplicateCount} duplicate workout(s) from ${workoutHistory.length} total`);
+      }
+
+      set({ workoutHistory: deduplicatedWorkouts });
       console.log('✅ Successfully loaded workouts from Firebase!');
-      console.log('📋 Workout summary:', workoutHistory.map(w => ({
+      console.log('📋 Workout summary:', deduplicatedWorkouts.map(w => ({
         title: w.title,
         date: w.date,
         exerciseCount: w.exercises.length

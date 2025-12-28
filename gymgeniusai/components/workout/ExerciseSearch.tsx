@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, LayoutChangeEvent } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, LayoutChangeEvent, ScrollView } from 'react-native';
 import { BrandColors, ComponentStyles } from '@/constants/theme';
 import { EXERCISE_DATABASE, CARDIO_DATABASE } from '@/utils/workout/exerciseDatabase';
 import type { CustomExercise } from '@/stores/workoutStore';
@@ -17,6 +17,7 @@ interface ExerciseSearchProps {
   onCreateCustomExercise: () => void;
   onSearchFocus?: () => void;
   onSearchLayout?: (event: LayoutChangeEvent) => void;
+  isKeyboardVisible?: boolean;
 }
 
 export const ExerciseSearch: React.FC<ExerciseSearchProps> = ({
@@ -32,20 +33,144 @@ export const ExerciseSearch: React.FC<ExerciseSearchProps> = ({
   onCreateCustomExercise,
   onSearchFocus,
   onSearchLayout,
+  isKeyboardVisible = false,
 }) => {
-  const filteredExercises = Object.keys(EXERCISE_DATABASE).filter(exercise =>
-    exercise.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Normalize text for flexible matching (handles hyphens, spaces, case)
+  const normalizeText = (text: string): string => {
+    return text
+      .toLowerCase()
+      .replace(/[-_]/g, ' ') // Replace hyphens and underscores with spaces
+      .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+      .trim();
+  };
+
+  // Map search terms to muscle groups
+  const getMuscleGroupFromSearch = (query: string): string | null => {
+    const normalized = normalizeText(query);
+    
+    // Map common search terms to muscle groups
+    const muscleGroupMap: Record<string, string> = {
+      // Shoulders
+      'shoulder': 'Shoulders',
+      'shoulders': 'Shoulders',
+      'delts': 'Shoulders',
+      'deltoids': 'Shoulders',
+      'deltoid': 'Shoulders',
+      'delt': 'Shoulders',
+      
+      // Chest
+      'chest': 'Chest',
+      'pecs': 'Chest',
+      'pectorals': 'Chest',
+      'pectoral': 'Chest',
+      'pec': 'Chest',
+      
+      // Back
+      'back': 'Back',
+      'lats': 'Back',
+      'latissimus': 'Back',
+      'lat': 'Back',
+      'rhomboids': 'Back',
+      'traps': 'Back',
+      'trapezius': 'Back',
+      
+      // Legs
+      'leg': 'Legs',
+      'legs': 'Legs',
+      'quads': 'Legs',
+      'quadriceps': 'Legs',
+      'quad': 'Legs',
+      'hamstrings': 'Legs',
+      'hamstring': 'Legs',
+      'hams': 'Legs',
+      'calves': 'Legs',
+      'calf': 'Legs',
+      'glutes': 'Legs',
+      'glute': 'Legs',
+      'thighs': 'Legs',
+      'thigh': 'Legs',
+      
+      // Arms
+      'arm': 'Arms',
+      'arms': 'Arms',
+      'bicep': 'Arms',
+      'biceps': 'Arms',
+      'tricep': 'Arms',
+      'triceps': 'Arms',
+      'forearm': 'Arms',
+      'forearms': 'Arms',
+      
+      // Core
+      'core': 'Core',
+      'abs': 'Core',
+      'abdominals': 'Core',
+      'abdominal': 'Core',
+      'obliques': 'Core',
+      'oblique': 'Core',
+      
+      // Full Body
+      'full body': 'Full Body',
+      'fullbody': 'Full Body',
+      'compound': 'Full Body',
+    };
+    
+    // Check for exact match
+    if (muscleGroupMap[normalized]) {
+      return muscleGroupMap[normalized];
+    }
+    
+    // Check if query contains any muscle group keyword
+    for (const [keyword, muscleGroup] of Object.entries(muscleGroupMap)) {
+      if (normalized.includes(keyword) || keyword.includes(normalized)) {
+        return muscleGroup;
+      }
+    }
+    
+    return null;
+  };
+
+  const normalizedQuery = normalizeText(searchQuery);
+  const matchedMuscleGroup = getMuscleGroupFromSearch(searchQuery);
+
+  // Get all exercises, prioritized: exact matches first, then muscle group matches
+  const filteredExercises = useMemo(() => {
+    const allExercises = Object.keys(EXERCISE_DATABASE);
+    
+    // First, find exact name matches
+    const exactMatches = allExercises.filter(exercise =>
+      normalizeText(exercise).includes(normalizedQuery)
+    );
+    
+    // Then, if search matches a muscle group, get all exercises for that group
+    let muscleGroupMatches: string[] = [];
+    if (matchedMuscleGroup) {
+      muscleGroupMatches = allExercises.filter(exercise => {
+        const exerciseData = EXERCISE_DATABASE[exercise];
+        return exerciseData.muscleGroup === matchedMuscleGroup;
+      });
+    }
+    
+    // Combine: exact matches first, then muscle group matches (excluding duplicates)
+    const combined = [...exactMatches];
+    muscleGroupMatches.forEach(exercise => {
+      if (!combined.includes(exercise)) {
+        combined.push(exercise);
+      }
+    });
+    
+    return combined;
+  }, [normalizedQuery, matchedMuscleGroup]);
 
   const filteredCardio = CARDIO_DATABASE.filter(activity =>
-    activity.toLowerCase().includes(searchQuery.toLowerCase())
+    normalizeText(activity).includes(normalizedQuery)
   );
 
   const filteredCustomExercises = customExercises.filter((exercise) => {
-    const query = searchQuery.toLowerCase();
-    const baseMatch = exercise.name.toLowerCase().includes(query);
-    const muscleMatch = exercise.muscleGroup.toLowerCase().includes(query);
-    const equipmentMatch = exercise.equipment.some((item) => item.toLowerCase().includes(query));
+    const baseMatch = exercise.name ? normalizeText(exercise.name).includes(normalizedQuery) : false;
+    const muscleMatch = exercise.muscleGroup ? normalizeText(exercise.muscleGroup).includes(normalizedQuery) : false;
+    const equipmentMatch = Array.isArray(exercise.equipment) 
+      ? exercise.equipment.some((item) => normalizeText(String(item)).includes(normalizedQuery))
+      : (typeof exercise.equipment === 'string' && normalizeText(exercise.equipment).includes(normalizedQuery));
     return exercise.type === workoutType && (baseMatch || muscleMatch || equipmentMatch);
   });
 
@@ -70,34 +195,65 @@ export const ExerciseSearch: React.FC<ExerciseSearchProps> = ({
 
           {searchQuery.length > 0 && (
             <View style={[styles.searchResults, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-              {filteredExercises.slice(0, 5).map((exercise, index) => (
-                <TouchableOpacity
-                  key={`exercise-search-${exercise}-${index}`}
-                  style={styles.searchResultItem}
-                  onPress={() => onExerciseSelect(exercise)}
-                >
-                  <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
-                    {exercise}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              <ScrollView 
+                style={styles.scrollableResults}
+                nestedScrollEnabled={true}
+                showsVerticalScrollIndicator={true}
+                indicatorStyle="white" // iOS: Make scroll indicator more visible (white on dark background)
+                persistentScrollbar={true} // Android: Keep scrollbar visible
+              >
+                {filteredExercises.length > 0 && (
+                  <>
+                    {matchedMuscleGroup && (
+                      <View style={styles.sectionHeader}>
+                        <Text style={[styles.sectionHeaderText, { color: BrandColors.textSecondary }]}>
+                          {filteredExercises.length} {matchedMuscleGroup} {filteredExercises.length === 1 ? 'Exercise' : 'Exercises'}
+                        </Text>
+                      </View>
+                    )}
+                    {filteredExercises.map((exercise, index) => (
+                      <TouchableOpacity
+                        key={`exercise-search-${exercise}-${index}`}
+                        style={styles.searchResultItem}
+                        onPress={() => onExerciseSelect(exercise)}
+                      >
+                        <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
+                          {exercise}
+                        </Text>
+                        {EXERCISE_DATABASE[exercise] && (
+                          <Text style={[styles.searchResultMeta, { color: BrandColors.textSecondary }]}>
+                            {EXERCISE_DATABASE[exercise].muscleGroup}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
 
-              {filteredCustomExercises.slice(0, 5).map((exercise) => (
-                <TouchableOpacity
-                  key={`custom-exercise-search-${exercise.id}`}
-                  style={styles.searchResultItem}
-                  onPress={() => onCustomExerciseSelect(exercise)}
-                >
-                  <View>
-                    <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
-                      {exercise.name}
-                    </Text>
-                    <Text style={[styles.searchResultMeta, { color: BrandColors.textSecondary }]}>
-                      Custom • {exercise.muscleGroup} • {exercise.equipment.join(', ')}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+                {filteredCustomExercises.length > 0 && (
+                  <>
+                    {filteredExercises.length > 0 && (
+                      <View style={styles.sectionDivider} />
+                    )}
+                    {filteredCustomExercises.map((exercise, index) => (
+                      <TouchableOpacity
+                        key={`custom-exercise-search-${exercise.id}-${index}`}
+                        style={styles.searchResultItem}
+                        onPress={() => onCustomExerciseSelect(exercise)}
+                      >
+                        <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
+                          {exercise.name || 'Custom Exercise'}
+                        </Text>
+                        {exercise.muscleGroup && (
+                          <Text style={[styles.searchResultMeta, { color: BrandColors.textSecondary }]}>
+                            Custom • {exercise.muscleGroup}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+              </ScrollView>
             </View>
           )}
 
@@ -123,50 +279,48 @@ export const ExerciseSearch: React.FC<ExerciseSearchProps> = ({
 
           {searchQuery.length > 0 && (
             <View style={[styles.searchResults, { backgroundColor: BrandColors.background, borderColor: BrandColors.textSecondary }]}>
-              {filteredCardio.slice(0, 5).map((activity, index) => (
-                <TouchableOpacity
-                  key={`cardio-search-${activity}-${index}`}
-                  style={styles.searchResultItem}
-                  onPress={() => {
-                    onCardioSelect(activity);
-                  }}
-                >
-                  <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
-                    {activity}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-
-              {filteredCustomExercises
-                .filter((exercise) => exercise.type === 'cardio')
-                .slice(0, 5)
-                .map((exercise) => (
+              <ScrollView 
+                style={styles.scrollableResults}
+                nestedScrollEnabled={true}
+                showsVerticalScrollIndicator={true}
+                indicatorStyle="white" // iOS: Make scroll indicator more visible (white on dark background)
+                persistentScrollbar={true} // Android: Keep scrollbar visible
+              >
+                {filteredCardio.map((activity, index) => (
                   <TouchableOpacity
-                    key={`custom-cardio-search-${exercise.id}`}
+                    key={`cardio-search-${activity}-${index}`}
                     style={styles.searchResultItem}
-                    onPress={() => onCustomExerciseSelect(exercise)}
+                    onPress={() => {
+                      onCardioSelect(activity);
+                    }}
                   >
-                    <View>
-                      <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
-                        {exercise.name}
-                      </Text>
-                      <Text style={[styles.searchResultMeta, { color: BrandColors.textSecondary }]}>
-                        Custom • {exercise.equipment.join(', ')}
-                      </Text>
-                    </View>
+                    <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
+                      {activity}
+                    </Text>
                   </TouchableOpacity>
                 ))}
+
+                {filteredCustomExercises
+                  .filter((exercise) => exercise.type === 'cardio')
+                  .map((exercise) => (
+                    <TouchableOpacity
+                      key={`custom-cardio-search-${exercise.id}`}
+                      style={styles.searchResultItem}
+                      onPress={() => onCustomExerciseSelect(exercise)}
+                    >
+                      <View>
+                        <Text style={[styles.searchResultText, { color: BrandColors.text }]}>
+                          {exercise.name}
+                        </Text>
+                        <Text style={[styles.searchResultMeta, { color: BrandColors.textSecondary }]}>
+                          Custom • {Array.isArray(exercise.equipment) ? exercise.equipment.join(', ') : exercise.equipment}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+              </ScrollView>
             </View>
           )}
-          
-          <TouchableOpacity
-            style={[ComponentStyles.button.primary, styles.addCardioButton]}
-            onPress={onAddCardioPress}
-          >
-            <Text style={[ComponentStyles.button.primaryText, { color: '#000' }]}>
-              + Add Cardio Activity
-            </Text>
-          </TouchableOpacity>
         </>
       )}
       
@@ -193,9 +347,28 @@ const styles = StyleSheet.create({
   searchResults: {
     borderRadius: 12,
     borderWidth: 1,
-    maxHeight: 200,
     marginTop: 8,
     overflow: 'hidden',
+  },
+  scrollableResults: {
+    maxHeight: 300,
+  },
+  sectionHeader: {
+    padding: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  sectionHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginVertical: 4,
   },
   searchResultItem: {
     padding: 12,

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, Pressable } from 'react-native';
 import { BrandColors } from '@/constants/theme';
 import { CardioCard } from './CardioCard';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 
 interface ExerciseCardProps {
   exercise: {
@@ -19,6 +20,15 @@ interface ExerciseCardProps {
     speed?: number;
     distance?: number;
     intensity?: string;
+    equipment?: string[] | string;
+    machineLoad?: {
+      type: 'pin' | 'plate';
+      equipment?: string | string[];
+      baseWeight?: number;
+      plateCounts?: Record<string, number>;
+      exerciseName?: string;
+    };
+    isCustom?: boolean;
   };
   validationErrors: Record<string, boolean>;
   onUpdateSet: (exerciseId: string, setId: string, field: string, value: any) => void;
@@ -85,8 +95,10 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
 
   const [showSetPicker, setShowSetPicker] = useState(false);
   const [notesVisibility, setNotesVisibility] = useState<Record<string, boolean>>({});
+  const [weightInputValues, setWeightInputValues] = useState<Record<string, string>>({});
+  const [repsInputValues, setRepsInputValues] = useState<Record<string, string>>({});
   const setCount = exercise.sets && Array.isArray(exercise.sets) ? exercise.sets.length : 1;
-  const setOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
+  const setOptions = [1, 2, 3, 4, 5, 6];
   const collapseEnabled = setCount > 0;
   const lastSet = exercise.sets && exercise.sets.length > 0 ? exercise.sets[exercise.sets.length - 1] : null;
   const inputRefs = useRef<Record<string, { weight: TextInput | null; reps: TextInput | null; notes: TextInput | null }>>({});
@@ -108,6 +120,11 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
       const currentIds = new Set<string>();
 
       for (const set of exercise.sets) {
+        // Filter out null/undefined sets
+        if (!set || !set.id) {
+          console.warn('⚠️ Skipping invalid set:', set);
+          continue;
+        }
         currentIds.add(set.id);
         const existing = prev[set.id];
         const hasExistingNotes = typeof set.notes === 'string' && set.notes.trim().length > 0;
@@ -206,11 +223,13 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
     >
       <View style={styles.exerciseHeader}>
         <View style={styles.exerciseTitleGroup}>
-          <Text style={[styles.exerciseName, { color: BrandColors.text }]}>{exercise.name}</Text>
+          <Text style={[styles.exerciseName, { color: BrandColors.text }]}>
+            {typeof exercise.name === 'string' ? exercise.name : (exercise.name?.toString() || 'Exercise')}
+          </Text>
           {isSaved && (
             <View style={[styles.savedBadge, { borderColor: BrandColors.textSecondary }]}>
               <Text style={[styles.savedBadgeText, { color: BrandColors.textSecondary }]}>Saved</Text>
-              <Text style={[styles.savedBadgeIcon, { color: BrandColors.textSecondary }]}>🔒</Text>
+              <IconSymbol name="lock.fill" size={14} color={BrandColors.textSecondary} style={styles.savedBadgeIcon} />
             </View>
           )}
         </View>
@@ -269,7 +288,9 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
         </View>
       ) : (
         <View style={styles.setsContainer}>
-          {exercise.sets && Array.isArray(exercise.sets) ? exercise.sets.map((set: any, setIndex: number) => {
+          {exercise.sets && Array.isArray(exercise.sets) ? exercise.sets
+            .filter((set: any) => set && set.id) // Filter out null/undefined sets
+            .map((set: any, setIndex: number) => {
             const noteContent = typeof set.notes === 'string' ? set.notes.trim() : '';
             const notesVisible = notesVisibility[set.id] ?? (noteContent.length > 0);
 
@@ -292,15 +313,68 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
                       }
                       inputRefs.current[set.id].weight = ref;
                     }}
-                    value={set.weight?.toString() || ''}
+                    value={weightInputValues[set.id] !== undefined 
+                      ? weightInputValues[set.id] 
+                      : (set.weight !== null && set.weight !== undefined ? String(set.weight) : '')}
                     editable={!isLocked}
                     selectTextOnFocus={!isLocked}
                     onChangeText={(text) => {
-                      const cleanedText = text.replace(/[^0-9.]/g, '');
+                      // Allow numbers and one decimal point
+                      let cleanedText = text.replace(/[^0-9.]/g, '');
                       const parts = cleanedText.split('.');
-                      if (parts.length > 2) return;
-                      if (parts[1] && parts[1].length > 1) return;
-                      onUpdateSet(exercise.id, set.id, 'weight', cleanedText ? parseFloat(cleanedText) : null);
+                      
+                      // Only allow one decimal point
+                      if (parts.length > 2) {
+                        // If user typed multiple decimal points, keep only the first one
+                        cleanedText = parts[0] + '.' + parts.slice(1).join('');
+                        parts.length = 2;
+                      }
+                      
+                      // Allow up to 1 decimal place (e.g., 0.5, 1.5, 10.5, 185.5)
+                      if (parts[1] && parts[1].length > 1) {
+                        // Limit to 1 decimal place
+                        cleanedText = parts[0] + '.' + parts[1].charAt(0);
+                      }
+                      
+                      // Update local state to show what user is typing
+                      setWeightInputValues(prev => ({
+                        ...prev,
+                        [set.id]: cleanedText
+                      }));
+                      
+                      // Handle empty string
+                      if (cleanedText === '') {
+                        onUpdateSet(exercise.id, set.id, 'weight', null);
+                        return;
+                      }
+                      
+                      // Handle just a decimal point - allow it while typing but don't store value yet
+                      if (cleanedText === '.') {
+                        return;
+                      }
+                      
+                      // Parse and update the value
+                      const numValue = parseFloat(cleanedText);
+                      if (!isNaN(numValue) && isFinite(numValue)) {
+                        // Store the numeric value
+                        onUpdateSet(exercise.id, set.id, 'weight', numValue);
+                      }
+                    }}
+                    onBlur={() => {
+                      // When user finishes typing, sync the display with the stored value
+                      const storedValue = set.weight;
+                      if (storedValue !== null && storedValue !== undefined) {
+                        setWeightInputValues(prev => ({
+                          ...prev,
+                          [set.id]: String(storedValue)
+                        }));
+                      } else {
+                        setWeightInputValues(prev => {
+                          const updated = { ...prev };
+                          delete updated[set.id];
+                          return updated;
+                        });
+                      }
                     }}
                     placeholder="Weight"
                     placeholderTextColor={BrandColors.textSecondary}
@@ -326,16 +400,73 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
                       }
                       inputRefs.current[set.id].reps = ref;
                     }}
-                    value={set.reps?.toString() || ''}
+                    value={repsInputValues[set.id] !== undefined 
+                      ? repsInputValues[set.id] 
+                      : (set.reps !== null && set.reps !== undefined ? String(set.reps) : '')}
                     editable={!isLocked}
                     selectTextOnFocus={!isLocked}
-                    onChangeText={(text) => onUpdateSet(exercise.id, set.id, 'reps', text ? parseInt(text) : null)}
+                    onChangeText={(text) => {
+                      // Allow numbers and one decimal point for reps (in case user wants partial reps)
+                      let cleanedText = text.replace(/[^0-9.]/g, '');
+                      const parts = cleanedText.split('.');
+                      
+                      // Only allow one decimal point
+                      if (parts.length > 2) {
+                        cleanedText = parts[0] + '.' + parts.slice(1).join('');
+                        parts.length = 2;
+                      }
+                      
+                      // Allow up to 1 decimal place
+                      if (parts[1] && parts[1].length > 1) {
+                        cleanedText = parts[0] + '.' + parts[1].charAt(0);
+                      }
+                      
+                      // Update local state to show what user is typing
+                      setRepsInputValues(prev => ({
+                        ...prev,
+                        [set.id]: cleanedText
+                      }));
+                      
+                      // Handle empty string
+                      if (cleanedText === '') {
+                        onUpdateSet(exercise.id, set.id, 'reps', null);
+                        return;
+                      }
+                      
+                      // Handle just a decimal point - allow it while typing but don't store value yet
+                      if (cleanedText === '.') {
+                        return;
+                      }
+                      
+                      // Parse and update the value
+                      const numValue = parseFloat(cleanedText);
+                      if (!isNaN(numValue) && isFinite(numValue)) {
+                        // Store the numeric value (can be decimal for partial reps)
+                        onUpdateSet(exercise.id, set.id, 'reps', numValue);
+                      }
+                    }}
                     placeholder="Reps"
                     placeholderTextColor={BrandColors.textSecondary}
-                    keyboardType="numeric"
+                    keyboardType="decimal-pad"
                     onFocus={() => {
                       const inputRef = inputRefs.current[set.id]?.reps ?? null;
                       onInputFocus?.(inputRef, 'reps');
+                    }}
+                    onBlur={() => {
+                      // When user finishes typing, sync the display with the stored value
+                      const storedValue = set.reps;
+                      if (storedValue !== null && storedValue !== undefined) {
+                        setRepsInputValues(prev => ({
+                          ...prev,
+                          [set.id]: String(storedValue)
+                        }));
+                      } else {
+                        setRepsInputValues(prev => {
+                          const updated = { ...prev };
+                          delete updated[set.id];
+                          return updated;
+                        });
+                      }
                     }}
                   />
                   
@@ -500,6 +631,14 @@ const styles = StyleSheet.create({
   exerciseName: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  exerciseDetails: {
+    marginTop: 4,
+  },
+  exerciseDetailText: {
+    fontSize: 12,
+    fontWeight: '400',
+    fontStyle: 'italic',
   },
   savedBadge: {
     flexDirection: 'row',

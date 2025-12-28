@@ -10,12 +10,14 @@ interface CardioModalProps {
   speed: string;
   distance: string;
   intensity: string;
+  caloriesBurned: string;
   onClose: () => void;
   onSelectActivity: (activity: string) => void;
   onDurationChange: (duration: string) => void;
   onSpeedChange: (speed: string) => void;
   onDistanceChange: (distance: string) => void;
   onIntensityChange: (intensity: string) => void;
+  onCaloriesBurnedChange: (calories: string) => void;
   onAdd: () => void;
   metricConfig?: {
     duration?: boolean;
@@ -30,12 +32,14 @@ export const CardioModal: React.FC<CardioModalProps> = ({
   speed,
   distance,
   intensity,
+  caloriesBurned,
   onClose,
   onSelectActivity,
   onDurationChange,
   onSpeedChange,
   onDistanceChange,
   onIntensityChange,
+  onCaloriesBurnedChange,
   onAdd,
   metricConfig,
 }) => {
@@ -53,30 +57,6 @@ export const CardioModal: React.FC<CardioModalProps> = ({
         </View>
         
         <ScrollView style={styles.modalContent}>
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Activity</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.activityScroll}>
-              {CARDIO_DATABASE.map((activity, index) => (
-                <TouchableOpacity
-                  key={`cardio-activity-${activity}-${index}`}
-                  style={[
-                    styles.activityChip,
-                    { backgroundColor: selectedActivity === activity ? BrandColors.accent : BrandColors.gray800 },
-                    { borderColor: BrandColors.textSecondary }
-                  ]}
-                  onPress={() => onSelectActivity(activity)}
-                >
-                  <Text style={[
-                    styles.activityChipText,
-                    { color: selectedActivity === activity ? '#000' : BrandColors.text }
-                  ]}>
-                    {activity}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-
           {showDuration && (
             <View style={styles.inputGroup}>
               <Text style={[styles.inputLabel, { color: BrandColors.text }]}>
@@ -94,32 +74,16 @@ export const CardioModal: React.FC<CardioModalProps> = ({
           )}
 
           <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Speed (optional)</Text>
+            <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Calories Burned (optional)</Text>
             <TextInput
               style={[styles.modalInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
-              value={speed}
-              onChangeText={onSpeedChange}
-              placeholder="6.5"
+              value={caloriesBurned}
+              onChangeText={onCaloriesBurnedChange}
+              placeholder="300"
               placeholderTextColor={BrandColors.textSecondary}
               keyboardType="numeric"
             />
           </View>
-
-          {showDistance && (
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: BrandColors.text }]}>
-                Distance (optional)
-              </Text>
-              <TextInput
-                style={[styles.modalInput, { color: BrandColors.text, borderColor: BrandColors.textSecondary }]}
-                value={distance}
-                onChangeText={onDistanceChange}
-                placeholder="3.2"
-                placeholderTextColor={BrandColors.textSecondary}
-                keyboardType="numeric"
-              />
-            </View>
-          )}
 
           <View style={styles.inputGroup}>
             <Text style={[styles.inputLabel, { color: BrandColors.text }]}>Intensity</Text>
@@ -192,20 +156,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 8,
-  },
-  activityScroll: {
-    marginVertical: 8,
-  },
-  activityChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginRight: 8,
-    borderWidth: 1,
-  },
-  activityChipText: {
-    fontSize: 14,
-    fontWeight: '500',
   },
   modalInput: {
     borderWidth: 1,

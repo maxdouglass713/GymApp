@@ -32,11 +32,37 @@ export interface UserDocument {
   firstName: string;
   birthday?: Date;
   points: number;
-  planTier: 'free' | 'premium';
+  planTier: 'free' | 'basic' | 'pro' | 'elite';
+  subscriptionExpiresAt?: Date;
   streaks: {
     workouts: number;
     meals: number;
     cardio: number;
+  };
+  
+  // AI usage tracking for subscription tiers
+  aiUsage?: {
+    mealPlans: {
+      count: number;
+      resetDate: Date;
+      lastUsed?: Date;
+    };
+    macroEstimations: {
+      count: number;
+      resetDate: Date;
+      lastUsed?: Date;
+    };
+    workoutPlans: {
+      count: number;
+      resetDate: Date;
+      lastUsed?: Date;
+    };
+    coachFeatures?: {
+      teamWorkoutGenerations: number;
+      teamMealPlanGenerations: number;
+      playerSummaries: number;
+      resetDate: Date;
+    };
   };
   onboardingCompleted: boolean;
   createdAt: Date;
@@ -77,6 +103,16 @@ export interface UserDocument {
   teamInviteCode?: string; // Store invite code for players
   teamId?: string; // Store Firebase team ID
   
+  // App usage and subscription
+  appUseType?: 'personal' | 'team_institution' | 'gym_trainer';
+  
+  // Settings
+  settings?: {
+    units?: 'imperial' | 'metric';
+    notifications?: boolean;
+    privacy?: boolean;
+  };
+  
   injuries?: string;
   nutritionPreference?: 'simple_macros' | 'detailed_tracking' | 'photo_logging';
   
@@ -93,6 +129,13 @@ export interface UserDocument {
     basedOnWeight?: number;
     basedOnGoal?: string;
   };
+  
+  // Daily weight tracking
+  dailyWeights?: Array<{
+    date: string; // YYYY-MM-DD format
+    weight: number;
+    loggedAt: Date;
+  }>;
 }
 
 export interface PointEventDocument {
@@ -304,6 +347,8 @@ export const COLLECTIONS = {
   COMMUNITIES: 'communities',
   COMMUNITY_MEMBERS: 'communityMembers',
   COMMUNITY_FEED: 'communityFeed',
+  GLOBAL_CUSTOM_EXERCISES: 'globalCustomExercises',
+  GLOBAL_CUSTOM_MEALS: 'globalCustomMeals',
 } as const;
 
 export interface PersonalCommunityDocument {

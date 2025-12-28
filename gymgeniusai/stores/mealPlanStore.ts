@@ -29,7 +29,7 @@ interface MealPlanStore {
   getLatestBatch: () => MealBatch | undefined;
 }
 
-const MEAL_PLANS_STORAGE_KEY = '@gym_genius_meal_plans';
+const MEAL_PLANS_STORAGE_KEY = '@kinetic_flow_meal_plans';
 
 export const useMealPlanStore = create<MealPlanStore>((set, get) => ({
   // Initial State

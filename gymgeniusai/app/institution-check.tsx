@@ -7,6 +7,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -15,14 +16,24 @@ import { useOnboardingStore } from '@/stores/onboardingStore';
 
 export default function InstitutionCheckScreen() {
   const { updateData } = useOnboardingStore();
-  const [selectedOption, setSelectedOption] = useState<'personal' | 'institution' | null>(null);
+  const [selectedOption, setSelectedOption] = useState<'personal' | 'institution' | 'gym_trainer' | null>(null);
 
-  const handleOptionSelect = (option: 'personal' | 'institution') => {
+  const handleOptionSelect = (option: 'personal' | 'institution' | 'gym_trainer') => {
+    // V1.0: Block team/institution/trainer - only personal use allowed
+    if (option !== 'personal') {
+      const { checkFeatureOrShowComingSoon } = require('@/utils/features/featureFlags');
+      checkFeatureOrShowComingSoon('teamManagement', 'Team & Institution Features');
+      return;
+    }
+    
     // Provide haptic feedback when selecting
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedOption(option);
     updateData({ 
-      userType: option,
+      userType: option === 'gym_trainer' ? 'institution' : option, // Map gym_trainer to institution for compatibility
+      appUseType: option === 'institution' ? 'team_institution' : option, // Map to match onboarding store type
+      // Auto-assign Basic tier for personal use, Elite for coaches and trainers
+      subscriptionTier: (option === 'institution' || option === 'gym_trainer') ? 'elite' : 'basic',
       // Reset institution-specific fields when switching
       institutionRole: undefined,
       institutionName: undefined,
@@ -38,10 +49,13 @@ export default function InstitutionCheckScreen() {
     }
 
     if (selectedOption === 'personal') {
-      // Navigate to regular onboarding
+      // V1.0: When personal is selected, go directly to step 1 (birthday), skipping step 0 (subscription tier)
+      const { useOnboardingStore } = require('@/stores/onboardingStore');
+      useOnboardingStore.getState().setCurrentStep(1); // Start at step 1 (birthday), skip step 0
       router.replace('/onboarding');
+    } else if (selectedOption === 'gym_trainer') {
+      router.replace('/trainer-entry');
     } else {
-      // Navigate to institution setup
       router.replace('/institution-setup');
     }
   };
@@ -51,18 +65,24 @@ export default function InstitutionCheckScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title}>How will you be using Kinetic Flow AI?</Text>
-          <Text style={styles.subtitle}>
-            This helps us customize your experience and unlock the right features for you
-          </Text>
-          <Text style={styles.instructionText}>
-            👆 Tap an option below to select
-          </Text>
-        </View>
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <Text style={styles.title}>How are you using Kinetic Flow?</Text>
+            <Text style={styles.subtitle}>
+              This helps us customize your experience and unlock the right features for you
+            </Text>
+            <Text style={styles.instructionText}>
+              👆 Tap an option below to select
+            </Text>
+          </View>
 
-        <View style={styles.optionsContainer}>
+          <View style={styles.optionsContainer}>
           <TouchableOpacity
             style={[
               styles.optionCard,
@@ -113,13 +133,16 @@ export default function InstitutionCheckScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
+          {/* HIDDEN for v1.0 - Team & Institution option */}
+          {/* <TouchableOpacity
             style={[
               styles.optionCard,
-              selectedOption === 'institution' && styles.optionCardSelected
+              selectedOption === 'institution' && styles.optionCardSelected,
+              { opacity: 0.5 }
             ]}
             onPress={() => handleOptionSelect('institution')}
-            activeOpacity={0.7}
+            activeOpacity={1}
+            disabled={true}
           >
             {selectedOption === 'institution' && (
               <View style={styles.checkmarkContainer}>
@@ -133,7 +156,7 @@ export default function InstitutionCheckScreen() {
               styles.optionTitle,
               selectedOption === 'institution' && styles.optionTitleSelected
             ]}>
-              Team/Institution Use
+              Team & Institution
             </Text>
             <Text style={[
               styles.optionDescription,
@@ -161,30 +184,84 @@ export default function InstitutionCheckScreen() {
                 • Analytics & reporting
               </Text>
             </View>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
+
+          {/* HIDDEN for v1.0 - Gym / Personal Trainer option */}
+          {/* <TouchableOpacity
+            style={[
+              styles.optionCard,
+              selectedOption === 'gym_trainer' && styles.optionCardSelected,
+              { opacity: 0.5 }
+            ]}
+            onPress={() => handleOptionSelect('gym_trainer')}
+            activeOpacity={1}
+            disabled={true}
+          >
+            {selectedOption === 'gym_trainer' && (
+              <View style={styles.checkmarkContainer}>
+                <Text style={styles.checkmark}>✓</Text>
+              </View>
+            )}
+            <View style={styles.optionIcon}>
+              <Text style={styles.optionEmoji}>💪</Text>
+            </View>
+            <Text style={[
+              styles.optionTitle,
+              selectedOption === 'gym_trainer' && styles.optionTitleSelected
+            ]}>
+              Gym / Personal Trainer
+            </Text>
+            <Text style={[
+              styles.optionDescription,
+              selectedOption === 'gym_trainer' && styles.optionDescriptionSelected
+            ]}>
+              Personal trainers and gyms managing clients and members
+            </Text>
+            <View style={styles.optionFeatures}>
+              <Text style={[
+                styles.featureText,
+                selectedOption === 'gym_trainer' && styles.featureTextSelected
+              ]}>
+                • Client management platform
+              </Text>
+              <Text style={[
+                styles.featureText,
+                selectedOption === 'gym_trainer' && styles.featureTextSelected
+              ]}>
+                • Custom meal & workout plans
+              </Text>
+              <Text style={[
+                styles.featureText,
+                selectedOption === 'gym_trainer' && styles.featureTextSelected
+              ]}>
+                • Progress tracking & analytics
+              </Text>
+            </View>
+          </TouchableOpacity> */}
         </View>
 
         <View style={styles.buttonContainer}>
-          {!selectedOption && (
-            <Text style={styles.hintText}>
-              Please select an option above to continue
-            </Text>
-          )}
-          <TouchableOpacity
-            style={[
-              ComponentStyles.button.primary,
-              styles.continueButton,
-              !selectedOption && styles.continueButtonDisabled
-            ]}
-            onPress={handleContinue}
-            disabled={!selectedOption}
-          >
-            <Text style={ComponentStyles.button.primaryText}>
-              Continue
-            </Text>
-          </TouchableOpacity>
+            {!selectedOption && (
+              <Text style={styles.hintText}>
+                Please select an option above to continue
+              </Text>
+            )}
+            <TouchableOpacity
+              style={[
+                ComponentStyles.button.primary,
+                styles.continueButton,
+                !selectedOption && styles.continueButtonDisabled
+              ]}
+              onPress={handleContinue}
+              disabled={!selectedOption}
+            >
+              <Text style={ComponentStyles.button.primaryText}>
+                Continue
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -194,16 +271,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BrandColors.background,
   },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
+  },
   content: {
     flex: 1,
     paddingHorizontal: 24,
     paddingTop: 60,
-    paddingBottom: 40,
-    justifyContent: 'space-between',
+    minHeight: '100%',
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 32,
   },
   title: {
     fontSize: 28,
@@ -230,18 +313,17 @@ const styles = StyleSheet.create({
     fontFamily: 'ui-rounded',
   },
   optionsContainer: {
-    flex: 1,
-    gap: 20,
-    justifyContent: 'center',
+    gap: 16,
+    marginBottom: 24,
   },
   optionCard: {
     backgroundColor: BrandColors.cardBackground,
     borderRadius: 16,
-    padding: 20,
+    padding: 16,
     borderWidth: 3,
     borderColor: BrandColors.border,
     alignItems: 'center',
-    minHeight: 180,
+    minHeight: 140,
     position: 'relative',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -261,31 +343,31 @@ const styles = StyleSheet.create({
   },
   checkmarkContainer: {
     position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    top: 10,
+    right: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: BrandColors.accent,
     justifyContent: 'center',
     alignItems: 'center',
   },
   checkmark: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   optionIcon: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
   optionEmoji: {
-    fontSize: 40,
+    fontSize: 32,
   },
   optionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: BrandColors.text,
-    marginBottom: 6,
+    marginBottom: 4,
     textAlign: 'center',
     fontFamily: 'ui-rounded',
   },
@@ -293,11 +375,11 @@ const styles = StyleSheet.create({
     color: BrandColors.accent,
   },
   optionDescription: {
-    fontSize: 13,
+    fontSize: 12,
     color: BrandColors.textSecondary,
     textAlign: 'center',
-    marginBottom: 12,
-    lineHeight: 18,
+    marginBottom: 8,
+    lineHeight: 16,
     fontFamily: 'ui-rounded',
   },
   optionDescriptionSelected: {
@@ -306,12 +388,12 @@ const styles = StyleSheet.create({
   optionFeatures: {
     alignItems: 'flex-start',
     width: '100%',
-    marginTop: 4,
+    marginTop: 2,
   },
   featureText: {
-    fontSize: 12,
+    fontSize: 11,
     color: BrandColors.textSecondary,
-    marginBottom: 2,
+    marginBottom: 1,
     fontFamily: 'ui-rounded',
   },
   featureTextSelected: {
@@ -319,6 +401,8 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     width: '100%',
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   hintText: {
     fontSize: 14,
@@ -330,7 +414,6 @@ const styles = StyleSheet.create({
   },
   continueButton: {
     marginTop: 0,
-    marginBottom: 20,
   },
   continueButtonDisabled: {
     opacity: 0.5,

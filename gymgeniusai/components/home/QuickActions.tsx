@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { BrandColors, Typography, Spacing, ComponentStyles } from '@/constants/theme';
+import { BrandColors, Typography, Spacing, ComponentStyles, BorderRadius } from '@/constants/theme';
 
 interface QuickAction {
   title: string;
@@ -11,82 +11,133 @@ interface QuickAction {
 
 interface QuickActionsProps {
   actions: QuickAction[];
+  containerStyle?: any;
 }
 
-export const QuickActions: React.FC<QuickActionsProps> = ({ actions }) => {
+export const QuickActions: React.FC<QuickActionsProps> = ({ actions, containerStyle }) => {
+  // Separate actions: first two go on top, rest go below
+  const topActions = actions.slice(0, 2);
+  const bottomActions = actions.slice(2);
+
   return (
-    <View style={styles.quickActionsSection}>
-      <Text style={styles.sectionTitle}>Quick Actions</Text>
-      <View style={styles.quickActionsGrid}>
-        {actions.map((action, index) => (
-          <TouchableOpacity
-            key={`quick-action-${action.title}-${index}`}
-            style={[
-              ComponentStyles.card,
-              styles.quickActionCard,
-              { 
-                borderColor: BrandColors.accent,
-                opacity: 1
-              }
-            ]}
-            onPress={action.onPress}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.actionIcon}>{action.icon}</Text>
-            <Text style={styles.actionTitle}>{action.title}</Text>
-            <Text style={[
-              styles.actionSubtitle, 
-              { color: BrandColors.accent }
-            ]}>
-              {action.subtitle}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+    <View style={[styles.quickActionsSection, containerStyle]}>
+      {/* Top row: 2 small square buttons */}
+      {topActions.length > 0 && (
+        <View style={styles.quickActionsTopRow}>
+          {topActions.map((action, index) => (
+            <TouchableOpacity
+              key={`quick-action-${action.title}-${index}`}
+              style={[
+                ComponentStyles.card,
+                styles.quickActionCardSmall,
+                { 
+                  borderColor: BrandColors.accent,
+                  backgroundColor: BrandColors.accent + '08',
+                }
+              ]}
+              onPress={action.onPress}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.actionTitleSmall}>{action.title}</Text>
+              <Text style={[
+                styles.actionSubtitleSmall, 
+                { color: BrandColors.accent }
+              ]}>
+                {action.subtitle}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      {/* Bottom row: wider button(s) */}
+      {bottomActions.length > 0 && (
+        <View style={styles.quickActionsBottomRow}>
+          {bottomActions.map((action, index) => (
+            <TouchableOpacity
+              key={`quick-action-${action.title}-${index + topActions.length}`}
+              style={[
+                ComponentStyles.card,
+                styles.quickActionCardWide,
+                { 
+                  borderColor: BrandColors.accent,
+                  backgroundColor: BrandColors.accent + '08',
+                }
+              ]}
+              onPress={action.onPress}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.actionTitleSmall}>{action.title}</Text>
+              <Text style={[
+                styles.actionSubtitleSmall, 
+                { color: BrandColors.accent }
+              ]}>
+                {action.subtitle}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   quickActionsSection: {
-    marginBottom: Spacing.xl,
-    paddingHorizontal: Spacing.lg,
-  },
-  sectionTitle: {
-    color: BrandColors.text,
-    fontSize: Typography.fontSize.xl,
-    fontWeight: Typography.fontWeight.bold,
-    fontFamily: Typography.fontFamily,
-    marginBottom: Spacing.md,
-  },
-  quickActionsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: Spacing.md,
-  },
-  quickActionCard: {
-    flex: 1,
-    alignItems: 'center',
-    minHeight: 100,
+    marginBottom: 0,
+    paddingHorizontal: 0,
     justifyContent: 'center',
-    padding: Spacing.md,
+    flex: 1,
   },
-  actionIcon: {
-    fontSize: 24,
+  quickActionsTopRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
     marginBottom: Spacing.sm,
   },
-  actionTitle: {
-    color: BrandColors.text,
-    fontSize: Typography.fontSize.sm,
-    fontWeight: Typography.fontWeight.semibold,
-    fontFamily: Typography.fontFamily,
-    textAlign: 'center',
-    marginBottom: Spacing.xs,
+  quickActionsBottomRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
   },
-  actionSubtitle: {
+  quickActionCardSmall: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.sm,
+    minHeight: 50,
+    borderWidth: 2,
+    borderRadius: BorderRadius.lg,
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  quickActionCardWide: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.sm,
+    minHeight: 40,
+    borderWidth: 2,
+    borderRadius: BorderRadius.lg,
+    shadowColor: BrandColors.accent,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  actionTitleSmall: {
+    color: BrandColors.text,
     fontSize: Typography.fontSize.xs,
+    fontWeight: Typography.fontWeight.bold,
     fontFamily: Typography.fontFamily,
     textAlign: 'center',
+    marginBottom: 2,
+  },
+  actionSubtitleSmall: {
+    fontSize: 10,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    fontWeight: Typography.fontWeight.medium,
   },
 });
 

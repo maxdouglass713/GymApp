@@ -1,0 +1,15 @@
+Your Privacy Policy is now live at:
+
+🔗 PRIMARY URL:
+https://gym-genius-ai-bd17c.web.app/privacy-policy.html
+
+🔗 ALTERNATIVE URL:
+https://gym-genius-ai-bd17c.firebaseapp.com/privacy-policy.html
+
+✅ Add this URL to App Store Connect:
+- Go to App Store Connect
+- Navigate to: App Information → Privacy Policy URL
+- Paste: https://gym-genius-ai-bd17c.web.app/privacy-policy.html
+
+🎉 Done! Your privacy policy is required for App Store submission and is now publicly accessible.
+

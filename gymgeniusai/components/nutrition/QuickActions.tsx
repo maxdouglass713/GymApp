@@ -3,10 +3,10 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { BrandColors } from '@/constants/theme';
 
 const MEAL_TYPES = [
-  { key: 'breakfast', label: 'Breakfast', icon: '🌅' },
-  { key: 'lunch', label: 'Lunch', icon: '☀️' },
-  { key: 'dinner', label: 'Dinner', icon: '🌙' },
-  { key: 'snacks', label: 'Snacks', icon: '🍎' },
+  { key: 'breakfast', label: 'Breakfast', icon: undefined },
+  { key: 'lunch', label: 'Lunch', icon: undefined },
+  { key: 'dinner', label: 'Dinner', icon: undefined },
+  { key: 'snacks', label: 'Snacks', icon: undefined },
 ] as const;
 
 interface QuickActionsProps {

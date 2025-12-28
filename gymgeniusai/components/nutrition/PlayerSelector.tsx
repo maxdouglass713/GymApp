@@ -16,8 +16,18 @@ export const PlayerSelector: React.FC<PlayerSelectorProps> = ({
   colors,
   onPlayerSelect,
 }) => {
-  const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player';
-  if (!isCoach) return null;
+  const isTrainer = profile?.appUseType === 'gym_trainer' && profile?.institutionRole !== 'player';
+  const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player' && !isTrainer;
+  const isCoachOrTrainer = isCoach || isTrainer;
+  if (!isCoachOrTrainer) return null;
+
+  // Use appropriate terminology
+  const memberLabel = isTrainer ? 'Client' : 'Player';
+  const memberLabelPlural = isTrainer ? 'Clients' : 'Players';
+  const selectLabel = isTrainer ? 'Select Client:' : 'Select Player:';
+  const chooseLabel = isTrainer ? 'Choose a client...' : 'Choose a player...';
+  const loadingLabel = isTrainer ? 'Loading clients...' : 'Loading players...';
+  const noMembersLabel = isTrainer ? 'No clients found' : 'No players found';
 
   const [teamPlayers, setTeamPlayers] = useState<Array<{id: string, name: string}>>([]);
   const [showPlayerDropdown, setShowPlayerDropdown] = useState(false);
@@ -114,14 +124,14 @@ export const PlayerSelector: React.FC<PlayerSelectorProps> = ({
   return (
     <>
       <View style={styles.playerSelectorContainer}>
-        <Text style={[styles.playerSelectorLabel, { color: colors.text }]}>Select Player:</Text>
+        <Text style={[styles.playerSelectorLabel, { color: colors.text }]}>{selectLabel}</Text>
         <View style={styles.playerSelectorWrapper}>
           <TouchableOpacity
             style={[styles.playerSelectorButton, { backgroundColor: colors.surface, borderColor: colors.icon }]}
             onPress={() => setShowPlayerDropdown(!showPlayerDropdown)}
           >
             <Text style={[styles.playerSelectorButtonText, { color: selectedPlayerId ? colors.text : colors.icon }]}>
-              {selectedPlayerId ? selectedPlayerName : 'Choose a player...'}
+              {selectedPlayerId ? selectedPlayerName : chooseLabel}
             </Text>
             <IconSymbol 
               name={showPlayerDropdown ? "chevron.up" : "chevron.down"} 
@@ -135,11 +145,11 @@ export const PlayerSelector: React.FC<PlayerSelectorProps> = ({
               <ScrollView style={styles.playerDropdownList} nestedScrollEnabled={true}>
                 {loadingPlayers ? (
                   <View style={styles.loadingContainer}>
-                    <Text style={[styles.loadingText, { color: colors.icon }]}>Loading players...</Text>
+                    <Text style={[styles.loadingText, { color: colors.icon }]}>{loadingLabel}</Text>
                   </View>
                 ) : teamPlayers.length === 0 ? (
                   <View style={styles.loadingContainer}>
-                    <Text style={[styles.loadingText, { color: colors.icon }]}>No players found</Text>
+                    <Text style={[styles.loadingText, { color: colors.icon }]}>{noMembersLabel}</Text>
                   </View>
                 ) : (
                   teamPlayers.map((player) => (
@@ -184,7 +194,7 @@ export const PlayerSelector: React.FC<PlayerSelectorProps> = ({
               <View style={styles.playerTargetItem}>
                 <Text style={[styles.playerTargetLabel, { color: colors.icon }]}>Calories</Text>
                 <Text style={[styles.playerTargetValue, { color: colors.text }]}>
-                  {selectedPlayerTargets.calories} kcal
+                  {selectedPlayerTargets.calories} cal
                 </Text>
               </View>
               <View style={styles.playerTargetItem}>

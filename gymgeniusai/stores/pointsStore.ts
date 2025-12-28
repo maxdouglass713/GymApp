@@ -43,12 +43,21 @@ export interface PointsStore {
 }
 
 // Feature catalog based on requirements
+// Note: AI features are now tier-based (Pro/Elite), not Volt-based
 const FEATURE_CATALOG: Record<string, number> = {
   'nutrition_meal_ideas': 1200,
   'workout_ideas': 1500,
   'advanced_insights': 2000,
   'community_challenges': 3000,
   'ai_coach': 4000,
+  // AI Features (require Pro/Elite tier, shown for informational purposes)
+  'ai_meal_plans': 0, // Pro/Elite tier required
+  'ai_macro_estimation': 0, // Pro/Elite tier required
+  'ai_photo_detection': 0, // Pro/Elite tier required
+  'ai_workout_plans': 0, // Pro/Elite tier required
+  'ai_exercise_suggestions': 0, // Pro/Elite tier required
+  'ai_progress_insights': 0, // Pro/Elite tier required
+  'ai_goal_recalibration': 0, // Pro/Elite tier required
 };
 
 const DAILY_CAPS = {
@@ -82,25 +91,6 @@ export const usePointsStore = create<PointsStore>((set, get) => ({
       if (event.type === 'complete_meal' && event.description?.toLowerCase().includes('logged a meal')) {
         console.log('⚠️ Skipping legacy meal log point event');
         return null;
-      }
-
-      // For mock authentication, skip Firebase operations
-      if (uid.startsWith('mock-user-')) {
-        console.log('🎭 Mock user detected, skipping Firebase sync for points');
-        // Still update local state
-        const newEvent: PointEvent = {
-          ...event,
-          id: Date.now().toString(),
-          createdAt: new Date(),
-        };
-        
-        set((state) => ({
-          totalPoints: state.totalPoints + event.amount,
-          pointEvents: [...state.pointEvents, newEvent],
-        }));
-        
-        console.log('✅ Points added locally for mock user');
-        return;
       }
 
       // Save to Firebase and get the event ID
@@ -185,22 +175,6 @@ export const usePointsStore = create<PointsStore>((set, get) => ({
       }
 
       console.log('🗑️ Deducting points for reference:', referenceId);
-
-      // For mock authentication, skip Firebase operations
-      if (uid.startsWith('mock-user-')) {
-        // Find and remove the point event from local state
-        const { pointEvents } = get();
-        const eventToRemove = pointEvents.find(e => e.referenceId === referenceId);
-        
-        if (eventToRemove) {
-          set((state) => ({
-            totalPoints: Math.max(0, state.totalPoints - eventToRemove.amount),
-            pointEvents: state.pointEvents.filter(e => e.referenceId !== referenceId),
-          }));
-          console.log('✅ Points deducted locally for mock user');
-        }
-        return;
-      }
 
       // First check local state for the event
       // Check both referenceId match and also check by workoutId/foodId fields
@@ -349,7 +323,36 @@ export const usePointsStore = create<PointsStore>((set, get) => ({
       const pointsRequired = FEATURE_CATALOG[featureKey] || 0;
       console.log('🔓 Unlocking feature for user:', uid);
       console.log('📋 Feature details:', { featureKey, via, pointsRequired });
-      // IMPORTANT: Do not deduct points here. Deduction should happen via spendPoints/checkout flow.
+      
+      // For Basic tier users: MUST have sufficient Volts to unlock features
+      // Skip this check for Pro/Elite tiers and premium unlocks
+      if (via === 'gp' && pointsRequired > 0) {
+        try {
+          // Dynamically import subscriptionStore to avoid circular dependency
+          const subscriptionStore = require('./subscriptionStore');
+          const { tier } = subscriptionStore.useSubscriptionStore.getState();
+          
+          if (tier === 'basic') {
+            const { totalPoints } = get();
+            if (totalPoints < pointsRequired) {
+              console.error(`❌ Basic tier user cannot unlock ${featureKey}: Insufficient Volts. Required: ${pointsRequired}, Have: ${totalPoints}`);
+              throw new Error(`Insufficient Volts. You need ${pointsRequired} V to unlock this feature, but you only have ${totalPoints} V.`);
+            }
+            
+            // Deduct Volts for Basic tier users
+            console.log(`💸 Basic tier: Deducting ${pointsRequired} V for feature unlock`);
+            const spent = await get().spendPoints(pointsRequired, `Unlocked ${featureKey}`, uid);
+            if (!spent) {
+              throw new Error('Failed to deduct Volts for feature unlock');
+            }
+          }
+        } catch (subscriptionError) {
+          console.error('❌ Error checking subscription tier or spending points:', subscriptionError);
+          throw subscriptionError;
+        }
+      }
+      
+      // IMPORTANT: For Pro/Elite tiers or premium unlocks, points are NOT deducted here.
 
       // Save to Firebase
       await featureService.unlockFeature({

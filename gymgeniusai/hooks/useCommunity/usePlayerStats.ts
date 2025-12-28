@@ -24,10 +24,12 @@ export const usePlayerStats = (teamId: string | undefined, activeTab: string) =>
   const [loadingOverview, setLoadingOverview] = useState(false);
 
   useEffect(() => {
-    const isInstitutionUser = profile?.userType === 'institution';
+    const isTrainerCoach = profile?.appUseType === 'gym_trainer' && profile?.institutionRole !== 'player';
+    const isCoach = profile?.userType === 'institution' && profile?.institutionRole !== 'player';
+    const isCoachOrTrainer = isCoach || isTrainerCoach;
     const validTabs = ['overview', 'leaderboard'];
     
-    if (!teamId || !validTabs.includes(activeTab) || !isInstitutionUser) {
+    if (!teamId || !validTabs.includes(activeTab) || !isCoachOrTrainer) {
       return;
     }
 
@@ -138,7 +140,7 @@ export const usePlayerStats = (teamId: string | undefined, activeTab: string) =>
     return () => {
       unsubscribeTeam();
     };
-  }, [teamId, activeTab, profile?.userType, profile?.institutionRole, calculateConsistencyScore, getStreakData]);
+  }, [teamId, activeTab, profile?.userType, profile?.institutionRole, profile?.appUseType, calculateConsistencyScore, getStreakData]);
 
   return { playerStats, loadingOverview };
 };

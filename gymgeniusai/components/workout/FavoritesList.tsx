@@ -4,6 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { BrandColors } from '@/constants/theme';
 import { useWorkoutStore } from '@/stores/workoutStore';
 import { persistenceService } from '@/services/persistenceService';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 
 const getLocalDateKey = (value: Date) => {
   const year = value.getFullYear();
@@ -33,6 +34,24 @@ export const FavoritesList: React.FC<FavoritesListProps> = ({
   const { currentWorkout } = useWorkoutStore();
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [pendingFavorite, setPendingFavorite] = useState<any | null>(null);
+
+  // Define handleUseTemplate before useEffect to fix Hooks order
+  const handleUseTemplate = React.useCallback((favorite: any) => {
+    setPendingFavorite(favorite);
+    setShowDatePicker(true);
+  }, []);
+
+  // Move useEffect BEFORE early return to fix Hooks order
+  React.useEffect(() => {
+    if (favoriteToApply) {
+      const favorite = favorites.find((fav) => fav.id === favoriteToApply);
+      if (favorite) {
+        setPendingFavorite(favorite);
+        setShowDatePicker(true);
+      }
+      onAppliedFavorite?.();
+    }
+  }, [favoriteToApply, favorites, onAppliedFavorite]);
 
   if (favorites.length === 0) {
     return (
@@ -168,11 +187,6 @@ export const FavoritesList: React.FC<FavoritesListProps> = ({
     onSegmentChange('all');
   };
 
-  const handleUseTemplate = (favorite: any) => {
-    setPendingFavorite(favorite);
-    setShowDatePicker(true);
-  };
-
   const handleConfirmDate = (date: Date) => {
     setShowDatePicker(false);
     if (pendingFavorite && date) {
@@ -186,16 +200,6 @@ export const FavoritesList: React.FC<FavoritesListProps> = ({
     setPendingFavorite(null);
   };
 
-  React.useEffect(() => {
-    if (favoriteToApply) {
-      const favorite = favorites.find((fav) => fav.id === favoriteToApply);
-      if (favorite) {
-        handleUseTemplate(favorite);
-      }
-      onAppliedFavorite?.();
-    }
-  }, [favoriteToApply, favorites, onAppliedFavorite]);
-
   return (
     <>
       <View style={styles.favoritesList}>
@@ -207,7 +211,7 @@ export const FavoritesList: React.FC<FavoritesListProps> = ({
                 onPress={() => handleEditFavorite(favorite)}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.actionIcon, { color: BrandColors.accent }]}>✏️</Text>
+                <IconSymbol name="pencil" size={20} color={BrandColors.accent} />
               </TouchableOpacity>
             </View>
           );

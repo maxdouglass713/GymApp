@@ -55,7 +55,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={BrandColors.accent} />
           <Text style={[styles.loadingText, { color: BrandColors.textSecondary }]}>
-            Loading player stats...
+            Loading {memberLabel.toLowerCase()} stats...
           </Text>
         </View>
       ) : playerStats.length === 0 ? (
@@ -86,24 +86,28 @@ const styles = StyleSheet.create({
   tabContent: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 16,
   },
   headerSection: {
     marginBottom: 20,
+    paddingTop: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: BrandColors.textSecondary + '20',
+    alignItems: 'center',
   },
   sectionTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     fontFamily: 'ui-rounded',
     marginBottom: 4,
+    lineHeight: 32,
+    textAlign: 'center',
   },
   playerCount: {
     fontSize: 14,
     fontFamily: 'ui-rounded',
     marginTop: 4,
+    textAlign: 'center',
   },
   scrollContent: {
     paddingBottom: 20,

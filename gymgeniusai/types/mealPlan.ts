@@ -57,6 +57,12 @@ export interface MealPlanGenerationRequest {
   age?: number;
   weight?: number;
   sex?: string;
+  assignedClientId?: string;
+  assignedClientName?: string;
+  coachNotes?: string;
+  customGoal?: string;
+  customCalorieTarget?: number;
+  dietaryNotes?: string;
 }
 
 
